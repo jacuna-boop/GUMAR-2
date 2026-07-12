@@ -1,0 +1,26 @@
+* { box-sizing: border-box; }
+body, html, #root { margin: 0; padding: 0; background: #0F1417; }
+input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
+::selection { background: #F5B94255; }
+select option { background: #171E23; }
+
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.print-only { display: none; }
+@media print {
+  body { background: #ffffff !important; }
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+}
+
+@media (max-width: 780px) {
+  .app-noprint { flex-direction: column !important; }
+  .app-sidebar {
+    width: 100% !important; min-width: 100% !important;
+    height: auto !important; max-height: 46vh !important;
+    position: static !important; border-right: none !important;
+    border-bottom: 1px solid #232D33 !important;
+  }
+  .app-main { min-height: 54vh; }
+}
