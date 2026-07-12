@@ -228,7 +228,11 @@ function emptyCronogramaState() {
 
 function emptyPresupuestoState() {
   return {
-    items: [], // { id, categoria, valorBase, valorEjecutado }
+    // Cada lista tiene items con la misma estructura de columnas que el Excel de referencia:
+    // { id, item, categoria, descripcion, cantidad, unidad, valorUnitario (antes de IVA), ivaPct }
+    // valorUnitarioConIva, valorTotal e ivaRecuperable se calculan (ver calcPresupuestoItem)
+    base: [],
+    ejecucion: [],
   };
 }
 
@@ -248,24 +252,59 @@ function emptyProjectData() {
   };
 }
 
-// Adds any fields missing from older saved data (e.g. projects created before "presupuesto"/"pagos" existed)
+// Adds any fields missing from older saved data (e.g. projects created before "presupuesto"/"pagos" existed,
+// or before "presupuesto" moved from {items} to {base, ejecucion})
 function ensureFullProjectData(data) {
+  const rawPresupuesto = data?.presupuesto;
+  const presupuesto =
+    rawPresupuesto && (rawPresupuesto.base || rawPresupuesto.ejecucion)
+      ? { base: rawPresupuesto.base || [], ejecucion: rawPresupuesto.ejecucion || [] }
+      : emptyPresupuestoState();
   return {
     upme: data?.upme || emptyUpmeState(),
     energizacion: data?.energizacion || emptyEnergizacionState(),
     cronograma: data?.cronograma || emptyCronogramaState(),
-    presupuesto: data?.presupuesto || emptyPresupuestoState(),
+    presupuesto,
     pagos: data?.pagos || emptyPagosState(),
   };
 }
 
+// Calcula valor unitario con IVA, valor total e IVA recuperable de una línea de presupuesto
+function calcPresupuestoItem(it) {
+  const cantidad = Number(it.cantidad) || 0;
+  const valorUnitario = Number(it.valorUnitario) || 0; // antes de IVA
+  const ivaPct = Number(it.ivaPct) || 0;
+  const valorUnitarioConIva = valorUnitario * (1 + ivaPct / 100);
+  const valorTotal = cantidad * valorUnitarioConIva;
+  const ivaRecuperable = valorTotal - cantidad * valorUnitario;
+  return { valorUnitarioConIva, valorTotal, ivaRecuperable };
+}
+
+function presupuestoListTotal(items) {
+  return (items || []).reduce((s, it) => s + calcPresupuestoItem(it).valorTotal, 0);
+}
+
 function presupuestoTotals(presupuesto) {
-  const items = presupuesto?.items || [];
-  const base = items.reduce((s, i) => s + (Number(i.valorBase) || 0), 0);
-  const ejecutado = items.reduce((s, i) => s + (Number(i.valorEjecutado) || 0), 0);
+  const base = presupuestoListTotal(presupuesto?.base);
+  const ejecutado = presupuestoListTotal(presupuesto?.ejecucion);
   const diferencia = ejecutado - base;
   const pct = base ? Math.round((ejecutado / base) * 100) : 0;
   return { base, ejecutado, diferencia, pct };
+}
+
+// Agrupa items de presupuesto por categoría, preservando el orden de primera aparición
+function groupPresupuestoItems(items) {
+  const order = [];
+  const map = {};
+  (items || []).forEach((it) => {
+    const cat = it.categoria?.trim() || "Sin categoría";
+    if (!map[cat]) {
+      map[cat] = [];
+      order.push(cat);
+    }
+    map[cat].push(it);
+  });
+  return order.map((cat) => ({ categoria: cat, items: map[cat] }));
 }
 
 function ordenPagado(orden) {
@@ -285,6 +324,80 @@ function pagosTotals(pagos) {
 function fmtMoney(n) {
   const num = Number(n) || 0;
   return num.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
+}
+
+// Parses a number typed/copied in Colombian format (e.g. "338.282" o "338.282,50") into a plain float
+function parseColombianNumber(str) {
+  if (str === undefined || str === null) return 0;
+  let s = String(str).trim();
+  if (!s) return 0;
+  s = s.replace(/[^0-9.,-]/g, "");
+  if (!s) return 0;
+  if (s.includes(",") && s.includes(".")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
+  } else {
+    s = s.replace(/\./g, ""); // "." usado como separador de miles
+  }
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+function parsePercentValue(str) {
+  if (!str) return 0;
+  const n = parseFloat(String(str).replace("%", "").replace(",", ".").trim());
+  return isNaN(n) ? 0 : n;
+}
+
+// Parsea filas pegadas desde Excel (separadas por tabulador) al formato de ítems de presupuesto.
+// Formato esperado por columna: Ítem | Descripción | Cantidad | Unidad | Valor unitario (antes de IVA) | IVA %
+// Una fila donde Cantidad/Unidad/Valor unitario vienen vacías se interpreta como encabezado de categoría
+// (p. ej. "1  EQUIPOS PRINCIPALES") y agrupa las filas siguientes bajo esa categoría.
+function parsePresupuestoPaste(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.trim().length > 0);
+
+  const items = [];
+  let currentCategoria = "Sin categoría";
+  let skipped = 0;
+
+  lines.forEach((line) => {
+    const cols = line.split("\t");
+    const itemCode = (cols[0] || "").trim();
+    const descripcion = (cols[1] || "").trim();
+    if (!descripcion) {
+      skipped++;
+      return;
+    }
+    if (/^(item|ítem)$/i.test(itemCode) || /^descrip/i.test(descripcion)) return; // fila de encabezados de columnas
+
+    const cantidadRaw = (cols[2] || "").trim();
+    const unidadRaw = (cols[3] || "").trim();
+    const valorRaw = (cols[4] || "").trim();
+    const ivaRaw = (cols[5] || "").trim();
+
+    const isGroupHeader = !cantidadRaw && !unidadRaw && !valorRaw;
+    if (isGroupHeader) {
+      currentCategoria = descripcion;
+      return;
+    }
+
+    items.push({
+      id: uid(),
+      item: itemCode,
+      categoria: currentCategoria,
+      descripcion,
+      cantidad: parseColombianNumber(cantidadRaw),
+      unidad: unidadRaw,
+      valorUnitario: parseColombianNumber(valorRaw),
+      ivaPct: parsePercentValue(ivaRaw),
+    });
+  });
+
+  return { items, skipped };
 }
 
 function fractionElapsed(startISO, endISO, dateISO) {
@@ -481,6 +594,10 @@ export {
   energizacionProgress,
   nextEnergizacionMilestone,
   presupuestoTotals,
+  presupuestoListTotal,
+  groupPresupuestoItems,
+  calcPresupuestoItem,
+  parsePresupuestoPaste,
   ordenPagado,
   ordenSaldo,
   pagosTotals,

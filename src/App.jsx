@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   Plus, X, ChevronRight, ChevronDown, Sun, FileCheck, Zap, MapPin, Calendar,
   AlertTriangle, CheckCircle2, Circle, Trash2, Loader2, FileDown, Save,
-  LayoutGrid, Copy, Check, DollarSign, Wallet,
+  LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { supabase } from "./lib/supabaseClient";
@@ -14,7 +14,8 @@ import {
   emptyProjectData, ensureFullProjectData,
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData, buildReportHTML, escapeHTML,
   upmeProgress, energizacionProgress, nextEnergizacionMilestone,
-  presupuestoTotals, ordenPagado, ordenSaldo, pagosTotals, fmtMoney,
+  presupuestoTotals, presupuestoListTotal, groupPresupuestoItems, calcPresupuestoItem, parsePresupuestoPaste,
+  ordenPagado, ordenSaldo, pagosTotals, fmtMoney,
 } from "./lib/data.js";
 
 /* ---------------------------------------------------------------------
@@ -55,6 +56,7 @@ function Dashboard({ session }) {
   const [saveStatus, setSaveStatus] = useState("saved"); // idle | saving | saved
   const [lastSaved, setLastSaved] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null); // { id, name } | null
+  const [editingProject, setEditingProject] = useState(null); // project object | null
   const [showImportText, setShowImportText] = useState(false);
   const [view, setView] = useState("overview"); // "overview" | "project"
 
@@ -172,6 +174,12 @@ function Dashboard({ session }) {
     setShowAddProject(false);
   };
 
+  const updateProjectInfo = async (id, name, capacity, location) => {
+    const { error } = await supabase.from("projects").update({ name, capacity, location }).eq("id", id);
+    if (error) { setSaveError(true); return; }
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name, capacity, location } : p)));
+  };
+
   const deleteProject = async (id) => {
     await supabase.from("projects").delete().eq("id", id);
     setProjects((prev) => prev.filter((p) => p.id !== id));
@@ -266,6 +274,7 @@ function Dashboard({ session }) {
           }}
           onAdd={() => setShowAddProject(true)}
           onDelete={(p) => setDeleteTarget({ id: p.id, name: p.name })}
+          onEditProject={(p) => setEditingProject(p)}
           projectData={projectData}
           onExport={exportData}
           onImportFile={importData}
@@ -337,7 +346,24 @@ function Dashboard({ session }) {
       </div>
       {selected && data && <PrintReport project={selected} data={data} />}
       {showAddProject && (
-        <AddProjectModal onClose={() => setShowAddProject(false)} onSave={addProject} />
+        <ProjectFormModal
+          title="Nuevo proyecto"
+          submitLabel="Crear proyecto"
+          onClose={() => setShowAddProject(false)}
+          onSave={addProject}
+        />
+      )}
+      {editingProject && (
+        <ProjectFormModal
+          title="Editar proyecto"
+          submitLabel="Guardar cambios"
+          initial={editingProject}
+          onClose={() => setEditingProject(null)}
+          onSave={(name, capacity, location) => {
+            updateProjectInfo(editingProject.id, name, capacity, location);
+            setEditingProject(null);
+          }}
+        />
       )}
       {deleteTarget && (
         <ConfirmModal
@@ -363,7 +389,7 @@ function Dashboard({ session }) {
   );
 }
 
-function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut }) {
+function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, onEditProject, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut }) {
   const fileInputRef = React.useRef(null);
 
   return (
@@ -406,15 +432,26 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
             >
               <div style={styles.projectItemTop}>
                 <span style={styles.projectName}>{p.name}</span>
-                <button
-                  style={styles.deleteBtn}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(p);
-                  }}
-                >
-                  <Trash2 size={13} />
-                </button>
+                <div style={{ display: "flex", gap: 2 }}>
+                  <button
+                    style={styles.deleteBtn}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditProject(p);
+                    }}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    style={styles.deleteBtn}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(p);
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
               <div style={styles.projectMeta}>
                 {p.capacity ? `${p.capacity} MWp` : ""}{p.location ? ` · ${p.location}` : ""}
@@ -963,6 +1000,7 @@ function CronogramaModule({ data, onChange }) {
     onChange({ ...data, tasks: [...data.tasks, task] });
     setNewTask({ nombre: "", fechaInicio: "", fechaFin: "", peso: "" });
   };
+  const updateTask = (id, patch) => onChange({ ...data, tasks: data.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
   const deleteTask = (id) => onChange({ ...data, tasks: data.tasks.filter((t) => t.id !== id) });
 
   const addSeg = () => {
@@ -971,6 +1009,7 @@ function CronogramaModule({ data, onChange }) {
     onChange({ ...data, seguimiento: [...data.seguimiento, entry] });
     setNewSeg({ fecha: todayISO(), avance: "" });
   };
+  const updateSeg = (id, patch) => onChange({ ...data, seguimiento: data.seguimiento.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
   const deleteSeg = (id) => onChange({ ...data, seguimiento: data.seguimiento.filter((s) => s.id !== id) });
 
   const sortedTasks = [...data.tasks].sort((a, b) => (a.fechaInicio || "").localeCompare(b.fechaInicio || ""));
@@ -999,10 +1038,18 @@ function CronogramaModule({ data, onChange }) {
           <tbody>
             {sortedTasks.map((t) => (
               <tr key={t.id}>
-                <td style={styles.ovTd}>{t.nombre}</td>
-                <td style={styles.ovTd}>{fmtDate(t.fechaInicio)}</td>
-                <td style={styles.ovTd}>{fmtDate(t.fechaFin)}</td>
-                <td style={styles.ovTd}>{t.peso}%</td>
+                <td style={styles.ovTd}>
+                  <input style={styles.miniInput} value={t.nombre} onChange={(e) => updateTask(t.id, { nombre: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <input type="date" style={styles.miniInput} value={t.fechaInicio} onChange={(e) => updateTask(t.id, { fechaInicio: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <input type="date" style={styles.miniInput} value={t.fechaFin} onChange={(e) => updateTask(t.id, { fechaFin: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <input type="number" style={{ ...styles.miniInput, width: 60 }} value={t.peso} onChange={(e) => updateTask(t.id, { peso: e.target.value })} />
+                </td>
                 <td style={styles.ovTd}>
                   <button style={styles.rowDeleteBtn} onClick={() => deleteTask(t.id)}><Trash2 size={13} /></button>
                 </td>
@@ -1066,8 +1113,12 @@ function CronogramaModule({ data, onChange }) {
           <tbody>
             {sortedSeg.map((s) => (
               <tr key={s.id}>
-                <td style={styles.ovTd}>{fmtDate(s.fecha)}</td>
-                <td style={styles.ovTd}>{s.avance}%</td>
+                <td style={styles.ovTd}>
+                  <input type="date" style={styles.miniInput} value={s.fecha} onChange={(e) => updateSeg(s.id, { fecha: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <input type="number" style={{ ...styles.miniInput, width: 70 }} value={s.avance} onChange={(e) => updateSeg(s.id, { avance: e.target.value })} />
+                </td>
                 <td style={styles.ovTd}>
                   <button style={styles.rowDeleteBtn} onClick={() => deleteSeg(s.id)}><Trash2 size={13} /></button>
                 </td>
@@ -1092,30 +1143,20 @@ function CronogramaModule({ data, onChange }) {
 }
 
 function PresupuestoModule({ data, onChange }) {
-  const [newItem, setNewItem] = useState({ categoria: "", valorBase: "", valorEjecutado: "" });
+  const [activeSub, setActiveSub] = useState("base"); // "base" | "ejecucion"
   const totals = presupuestoTotals(data);
 
-  const addItem = () => {
-    if (!newItem.categoria.trim() || newItem.valorBase === "") return;
-    const item = {
-      id: uid(),
-      categoria: newItem.categoria.trim(),
-      valorBase: Number(newItem.valorBase) || 0,
-      valorEjecutado: Number(newItem.valorEjecutado) || 0,
-    };
-    onChange({ ...data, items: [...data.items, item] });
-    setNewItem({ categoria: "", valorBase: "", valorEjecutado: "" });
-  };
-  const updateItem = (id, patch) => {
-    onChange({ ...data, items: data.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) });
-  };
-  const deleteItem = (id) => onChange({ ...data, items: data.items.filter((it) => it.id !== id) });
-
-  const chartData = data.items.map((it) => ({
-    name: it.categoria.length > 14 ? it.categoria.slice(0, 14) + "…" : it.categoria,
-    Base: Number(it.valorBase) || 0,
-    Ejecutado: Number(it.valorEjecutado) || 0,
+  const baseByCat = groupPresupuestoItems(data.base);
+  const ejecByCat = groupPresupuestoItems(data.ejecucion);
+  const catNames = Array.from(new Set([...baseByCat.map((g) => g.categoria), ...ejecByCat.map((g) => g.categoria)]));
+  const chartData = catNames.map((cat) => ({
+    name: cat.length > 16 ? cat.slice(0, 16) + "…" : cat,
+    Base: presupuestoListTotal((baseByCat.find((g) => g.categoria === cat) || {}).items),
+    Ejecución: presupuestoListTotal((ejecByCat.find((g) => g.categoria === cat) || {}).items),
   }));
+
+  const currentItems = activeSub === "base" ? data.base : data.ejecucion;
+  const setCurrentItems = (nextItems) => onChange({ ...data, [activeSub]: nextItems });
 
   return (
     <div>
@@ -1153,84 +1194,174 @@ function PresupuestoModule({ data, onChange }) {
               />
               <RLegend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="Base" fill="#4FA8D8" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Ejecutado" fill="#F5B942" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Ejecución" fill="#F5B942" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
       )}
 
+      <div style={styles.presSubTabs}>
+        <button
+          style={{ ...styles.presSubTabBtn, ...(activeSub === "base" ? styles.presSubTabBtnActive : {}) }}
+          onClick={() => setActiveSub("base")}
+        >
+          Presupuesto base
+        </button>
+        <button
+          style={{ ...styles.presSubTabBtn, ...(activeSub === "ejecucion" ? styles.presSubTabBtnActive : {}) }}
+          onClick={() => setActiveSub("ejecucion")}
+        >
+          Presupuesto de ejecución
+        </button>
+      </div>
+
+      <PresupuestoTable items={currentItems} onChange={setCurrentItems} />
+    </div>
+  );
+}
+
+function PresupuestoTable({ items, onChange }) {
+  const [newItem, setNewItem] = useState({
+    item: "", categoria: "", descripcion: "", cantidad: "", unidad: "",
+    valorUnitario: "", ivaPct: "",
+  });
+  const [showPaste, setShowPaste] = useState(false);
+
+  const grouped = groupPresupuestoItems(items);
+
+  const updateItem = (id, patch) => {
+    onChange(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  };
+  const deleteItem = (id) => onChange(items.filter((it) => it.id !== id));
+  const addItem = () => {
+    if (!newItem.descripcion.trim()) return;
+    const item = {
+      id: uid(),
+      item: newItem.item.trim(),
+      categoria: newItem.categoria.trim() || "Sin categoría",
+      descripcion: newItem.descripcion.trim(),
+      cantidad: Number(newItem.cantidad) || 0,
+      unidad: newItem.unidad.trim(),
+      valorUnitario: Number(newItem.valorUnitario) || 0,
+      ivaPct: Number(newItem.ivaPct) || 0,
+    };
+    onChange([...items, item]);
+    setNewItem({ item: "", categoria: "", descripcion: "", cantidad: "", unidad: "", valorUnitario: "", ivaPct: "" });
+  };
+
+  return (
+    <div>
+      <div style={styles.pasteBtnRow}>
+        <button style={styles.pasteBtn} onClick={() => setShowPaste(true)}>
+          <ClipboardPaste size={14} /> Pegar desde Excel
+        </button>
+      </div>
+      {showPaste && (
+        <PastePresupuestoModal
+          onClose={() => setShowPaste(false)}
+          onImport={(newItems) => {
+            onChange([...items, ...newItems]);
+            setShowPaste(false);
+          }}
+        />
+      )}
       <div style={styles.cronoTableWrap}>
-        <table style={styles.overviewTable}>
-          <thead>
-            <tr>
-              <th style={styles.ovTh}>Categoría / actividad</th>
-              <th style={styles.ovTh}>Presupuesto base</th>
-              <th style={styles.ovTh}>Presupuesto ejecución</th>
-              <th style={styles.ovTh}>Diferencia</th>
-              <th style={styles.ovTh}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.items.map((it) => {
-              const diff = (Number(it.valorEjecutado) || 0) - (Number(it.valorBase) || 0);
-              return (
-                <tr key={it.id}>
-                  <td style={styles.ovTd}>
-                    <input
-                      style={styles.miniInput}
-                      value={it.categoria}
-                      onChange={(e) => updateItem(it.id, { categoria: e.target.value })}
-                    />
-                  </td>
-                  <td style={styles.ovTd}>
-                    <input
-                      type="number"
-                      style={styles.miniInput}
-                      value={it.valorBase}
-                      onChange={(e) => updateItem(it.id, { valorBase: e.target.value })}
-                    />
-                  </td>
-                  <td style={styles.ovTd}>
-                    <input
-                      type="number"
-                      style={styles.miniInput}
-                      value={it.valorEjecutado}
-                      onChange={(e) => updateItem(it.id, { valorEjecutado: e.target.value })}
-                    />
-                  </td>
-                  <td style={{ ...styles.ovTd, color: diff > 0 ? "#E2604F" : "#5FBF8F" }}>
-                    {diff > 0 ? "+" : ""}{fmtMoney(diff)}
-                  </td>
-                  <td style={styles.ovTd}>
-                    <button style={styles.rowDeleteBtn} onClick={() => deleteItem(it.id)}><Trash2 size={13} /></button>
-                  </td>
+      <table style={styles.overviewTable}>
+        <thead>
+          <tr>
+            <th style={styles.ovTh}>Ítem</th>
+            <th style={styles.ovTh}>Descripción</th>
+            <th style={styles.ovTh}>Cant.</th>
+            <th style={styles.ovTh}>Unidad</th>
+            <th style={styles.ovTh}>Valor unit. (sin IVA)</th>
+            <th style={styles.ovTh}>IVA %</th>
+            <th style={styles.ovTh}>Valor unit. (con IVA)</th>
+            <th style={styles.ovTh}>Valor total</th>
+            <th style={styles.ovTh}>IVA recuperable</th>
+            <th style={styles.ovTh}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {grouped.map((group) => {
+            const groupTotal = presupuestoListTotal(group.items);
+            return (
+              <React.Fragment key={group.categoria}>
+                <tr>
+                  <td colSpan={7} style={styles.presGroupRow}>{group.categoria}</td>
+                  <td style={styles.presGroupRow}>{fmtMoney(groupTotal)}</td>
+                  <td style={styles.presGroupRow} colSpan={2}></td>
                 </tr>
-              );
-            })}
-            <tr>
-              <td style={styles.ovTd}>
-                <input style={styles.miniInput} placeholder="Nueva categoría" value={newItem.categoria} onChange={(e) => setNewItem({ ...newItem, categoria: e.target.value })} />
-              </td>
-              <td style={styles.ovTd}>
-                <input type="number" style={styles.miniInput} placeholder="$" value={newItem.valorBase} onChange={(e) => setNewItem({ ...newItem, valorBase: e.target.value })} />
-              </td>
-              <td style={styles.ovTd}>
-                <input type="number" style={styles.miniInput} placeholder="$" value={newItem.valorEjecutado} onChange={(e) => setNewItem({ ...newItem, valorEjecutado: e.target.value })} />
-              </td>
-              <td style={styles.ovTd}></td>
-              <td style={styles.ovTd}>
-                <button style={styles.addRowBtn} onClick={addItem}><Plus size={14} /></button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                {group.items.map((it) => {
+                  const calc = calcPresupuestoItem(it);
+                  return (
+                    <tr key={it.id}>
+                      <td style={styles.ovTd}>
+                        <input style={{ ...styles.miniInput, width: 56 }} value={it.item} onChange={(e) => updateItem(it.id, { item: e.target.value })} />
+                      </td>
+                      <td style={styles.ovTd}>
+                        <input style={styles.miniInput} value={it.descripcion} onChange={(e) => updateItem(it.id, { descripcion: e.target.value })} />
+                      </td>
+                      <td style={styles.ovTd}>
+                        <input type="number" style={{ ...styles.miniInput, width: 64 }} value={it.cantidad} onChange={(e) => updateItem(it.id, { cantidad: e.target.value })} />
+                      </td>
+                      <td style={styles.ovTd}>
+                        <input style={{ ...styles.miniInput, width: 64 }} value={it.unidad} onChange={(e) => updateItem(it.id, { unidad: e.target.value })} />
+                      </td>
+                      <td style={styles.ovTd}>
+                        <input type="number" style={styles.miniInput} value={it.valorUnitario} onChange={(e) => updateItem(it.id, { valorUnitario: e.target.value })} />
+                      </td>
+                      <td style={styles.ovTd}>
+                        <input type="number" style={{ ...styles.miniInput, width: 56 }} value={it.ivaPct} onChange={(e) => updateItem(it.id, { ivaPct: e.target.value })} />
+                      </td>
+                      <td style={styles.ovTd}>{fmtMoney(calc.valorUnitarioConIva)}</td>
+                      <td style={{ ...styles.ovTd, fontWeight: 600 }}>{fmtMoney(calc.valorTotal)}</td>
+                      <td style={styles.ovTd}>{fmtMoney(calc.ivaRecuperable)}</td>
+                      <td style={styles.ovTd}>
+                        <button style={styles.rowDeleteBtn} onClick={() => deleteItem(it.id)}><Trash2 size={13} /></button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </React.Fragment>
+            );
+          })}
+          <tr>
+            <td style={styles.ovTd}>
+              <input style={{ ...styles.miniInput, width: 56 }} placeholder="1.1" value={newItem.item} onChange={(e) => setNewItem({ ...newItem, item: e.target.value })} />
+            </td>
+            <td style={styles.ovTd}>
+              <input style={styles.miniInput} placeholder="Descripción" value={newItem.descripcion} onChange={(e) => setNewItem({ ...newItem, descripcion: e.target.value })} />
+            </td>
+            <td style={styles.ovTd}>
+              <input type="number" style={{ ...styles.miniInput, width: 64 }} placeholder="0" value={newItem.cantidad} onChange={(e) => setNewItem({ ...newItem, cantidad: e.target.value })} />
+            </td>
+            <td style={styles.ovTd}>
+              <input style={{ ...styles.miniInput, width: 64 }} placeholder="UND" value={newItem.unidad} onChange={(e) => setNewItem({ ...newItem, unidad: e.target.value })} />
+            </td>
+            <td style={styles.ovTd}>
+              <input type="number" style={styles.miniInput} placeholder="$" value={newItem.valorUnitario} onChange={(e) => setNewItem({ ...newItem, valorUnitario: e.target.value })} />
+            </td>
+            <td style={styles.ovTd}>
+              <input type="number" style={{ ...styles.miniInput, width: 56 }} placeholder="%" value={newItem.ivaPct} onChange={(e) => setNewItem({ ...newItem, ivaPct: e.target.value })} />
+            </td>
+            <td style={styles.ovTd} colSpan={2}>
+              <input style={styles.miniInput} placeholder="Categoría (ej. Equipos principales)" value={newItem.categoria} onChange={(e) => setNewItem({ ...newItem, categoria: e.target.value })} />
+            </td>
+            <td style={styles.ovTd}></td>
+            <td style={styles.ovTd}>
+              <button style={styles.addRowBtn} onClick={addItem}><Plus size={14} /></button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
       </div>
     </div>
   );
 }
 
+
 function PagosModule({ data, onChange }) {
-  const [newOrden, setNewOrden] = useState({ numero: "", proveedor: "", valorTotal: "" });
+  const [newOrden, setNewOrden] = useState({ numero: "", proveedor: "", descripcion: "", valorTotal: "" });
   const [openId, setOpenId] = useState(null);
   const [newPago, setNewPago] = useState({ fecha: todayISO(), valor: "", concepto: "" });
   const totals = pagosTotals(data);
@@ -1241,12 +1372,16 @@ function PagosModule({ data, onChange }) {
       id: uid(),
       numero: newOrden.numero.trim(),
       proveedor: newOrden.proveedor.trim(),
+      descripcion: newOrden.descripcion.trim(),
       valorTotal: Number(newOrden.valorTotal) || 0,
       pagos: [],
     };
     onChange({ ...data, ordenes: [...data.ordenes, orden] });
-    setNewOrden({ numero: "", proveedor: "", valorTotal: "" });
+    setNewOrden({ numero: "", proveedor: "", descripcion: "", valorTotal: "" });
     setOpenId(orden.id);
+  };
+  const updateOrden = (id, patch) => {
+    onChange({ ...data, ordenes: data.ordenes.map((o) => (o.id === id ? { ...o, ...patch } : o)) });
   };
   const deleteOrden = (id) => onChange({ ...data, ordenes: data.ordenes.filter((o) => o.id !== id) });
 
@@ -1263,6 +1398,14 @@ function PagosModule({ data, onChange }) {
     onChange({
       ...data,
       ordenes: data.ordenes.map((o) => (o.id === ordenId ? { ...o, pagos: o.pagos.filter((p) => p.id !== pagoId) } : o)),
+    });
+  };
+  const updatePago = (ordenId, pagoId, patch) => {
+    onChange({
+      ...data,
+      ordenes: data.ordenes.map((o) =>
+        o.id === ordenId ? { ...o, pagos: o.pagos.map((p) => (p.id === pagoId ? { ...p, ...patch } : p)) } : o
+      ),
     });
   };
 
@@ -1292,6 +1435,7 @@ function PagosModule({ data, onChange }) {
           <thead>
             <tr>
               <th style={styles.ovTh}>Orden de servicio</th>
+              <th style={styles.ovTh}>Concepto / Descripción</th>
               <th style={styles.ovTh}>Proveedor</th>
               <th style={styles.ovTh}>Valor total</th>
               <th style={styles.ovTh}>Pagado / Saldo</th>
@@ -1307,11 +1451,37 @@ function PagosModule({ data, onChange }) {
               return (
                 <React.Fragment key={o.id}>
                   <tr style={styles.ovRow} onClick={() => setOpenId(isOpen ? null : o.id)}>
-                    <td style={styles.ovTdName}>
-                      <div style={{ fontWeight: 600 }}>{o.numero}</div>
+                    <td style={styles.ovTdName} onClick={(e) => e.stopPropagation()}>
+                      <input
+                        style={{ ...styles.miniInput, fontWeight: 600 }}
+                        value={o.numero}
+                        onChange={(e) => updateOrden(o.id, { numero: e.target.value })}
+                      />
                     </td>
-                    <td style={styles.ovTd}>{o.proveedor || "—"}</td>
-                    <td style={styles.ovTd}>{fmtMoney(o.valorTotal)}</td>
+                    <td style={styles.ovTd} onClick={(e) => e.stopPropagation()}>
+                      <input
+                        style={styles.miniInput}
+                        placeholder="Concepto de la orden"
+                        value={o.descripcion || ""}
+                        onChange={(e) => updateOrden(o.id, { descripcion: e.target.value })}
+                      />
+                    </td>
+                    <td style={styles.ovTd} onClick={(e) => e.stopPropagation()}>
+                      <input
+                        style={styles.miniInput}
+                        placeholder="Proveedor"
+                        value={o.proveedor || ""}
+                        onChange={(e) => updateOrden(o.id, { proveedor: e.target.value })}
+                      />
+                    </td>
+                    <td style={styles.ovTd} onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="number"
+                        style={styles.miniInput}
+                        value={o.valorTotal}
+                        onChange={(e) => updateOrden(o.id, { valorTotal: Number(e.target.value) || 0 })}
+                      />
+                    </td>
                     <td style={styles.ovTd}>
                       <OvBar pct={pct} color={saldo <= 0 ? "#5FBF8F" : "#F5B942"} />
                       <div style={{ fontSize: 10.5, color: "#7A8A93", marginTop: 3, fontFamily: "'JetBrains Mono', monospace" }}>
@@ -1326,7 +1496,7 @@ function PagosModule({ data, onChange }) {
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={5} style={{ ...styles.ovTd, background: "#12181C" }}>
+                      <td colSpan={6} style={{ ...styles.ovTd, background: "#12181C" }}>
                         <div style={{ padding: "6px 4px" }}>
                           <table style={styles.overviewTable}>
                             <thead>
@@ -1340,9 +1510,30 @@ function PagosModule({ data, onChange }) {
                             <tbody>
                               {o.pagos.map((p) => (
                                 <tr key={p.id}>
-                                  <td style={styles.ovTd}>{fmtDate(p.fecha)}</td>
-                                  <td style={styles.ovTd}>{fmtMoney(p.valor)}</td>
-                                  <td style={styles.ovTd}>{p.concepto || "—"}</td>
+                                  <td style={styles.ovTd}>
+                                    <input
+                                      type="date"
+                                      style={styles.miniInput}
+                                      value={p.fecha}
+                                      onChange={(e) => updatePago(o.id, p.id, { fecha: e.target.value })}
+                                    />
+                                  </td>
+                                  <td style={styles.ovTd}>
+                                    <input
+                                      type="number"
+                                      style={styles.miniInput}
+                                      value={p.valor}
+                                      onChange={(e) => updatePago(o.id, p.id, { valor: Number(e.target.value) || 0 })}
+                                    />
+                                  </td>
+                                  <td style={styles.ovTd}>
+                                    <input
+                                      style={styles.miniInput}
+                                      placeholder="Concepto"
+                                      value={p.concepto || ""}
+                                      onChange={(e) => updatePago(o.id, p.id, { concepto: e.target.value })}
+                                    />
+                                  </td>
                                   <td style={styles.ovTd}>
                                     <button style={styles.rowDeleteBtn} onClick={() => deletePago(o.id, p.id)}><Trash2 size={13} /></button>
                                   </td>
@@ -1374,6 +1565,9 @@ function PagosModule({ data, onChange }) {
             <tr>
               <td style={styles.ovTd}>
                 <input style={styles.miniInput} placeholder="N.° de orden" value={newOrden.numero} onChange={(e) => setNewOrden({ ...newOrden, numero: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}>
+                <input style={styles.miniInput} placeholder="Concepto de la orden" value={newOrden.descripcion} onChange={(e) => setNewOrden({ ...newOrden, descripcion: e.target.value })} />
               </td>
               <td style={styles.ovTd}>
                 <input style={styles.miniInput} placeholder="Proveedor" value={newOrden.proveedor} onChange={(e) => setNewOrden({ ...newOrden, proveedor: e.target.value })} />
@@ -1408,16 +1602,16 @@ function Legend() {
 /* ---------------------------------------------------------------------
    Add project modal
 --------------------------------------------------------------------- */
-function AddProjectModal({ onClose, onSave }) {
-  const [name, setName] = useState("");
-  const [capacity, setCapacity] = useState("");
-  const [location, setLocation] = useState("");
+function ProjectFormModal({ onClose, onSave, initial, title, submitLabel }) {
+  const [name, setName] = useState(initial?.name || "");
+  const [capacity, setCapacity] = useState(initial?.capacity || "");
+  const [location, setLocation] = useState(initial?.location || "");
 
   return (
     <div style={styles.modalOverlay} onClick={onClose}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.modalHead}>
-          <h3 style={styles.h3}>Nuevo proyecto</h3>
+          <h3 style={styles.h3}>{title}</h3>
           <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
         </div>
         <label style={styles.modalField}>
@@ -1437,7 +1631,7 @@ function AddProjectModal({ onClose, onSave }) {
           disabled={!name.trim()}
           onClick={() => onSave(name.trim(), capacity.trim(), location.trim())}
         >
-          Crear proyecto
+          {submitLabel}
         </button>
       </div>
     </div>
@@ -1543,6 +1737,62 @@ function ImportTextModal({ onClose, onImport }) {
         <button style={{ ...styles.addProjectBtn, marginTop: 10, opacity: text.trim() ? 1 : 0.5 }} disabled={!text.trim()} onClick={handleImport}>
           Importar
         </button>
+      </div>
+    </div>
+  );
+}
+
+function PastePresupuestoModal({ onClose, onImport }) {
+  const [text, setText] = useState("");
+  const [preview, setPreview] = useState(null); // { items, skipped, categorias } | null
+
+  const process = () => {
+    const { items, skipped } = parsePresupuestoPaste(text);
+    const categorias = Array.from(new Set(items.map((it) => it.categoria)));
+    setPreview({ items, skipped, categorias });
+  };
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.exportModal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Pegar presupuesto desde Excel</h3>
+          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+        </div>
+        <p style={styles.exportHint}>
+          En Excel, selecciona las columnas <strong>Ítem, Descripción, Cantidad, Unidad, Valor unitario (antes de IVA)
+          e IVA %</strong> (en ese orden) — puedes incluir las filas de categoría (como "1  EQUIPOS PRINCIPALES") que
+          tengan Cantidad/Unidad/Valor unitario vacíos, se usan para agrupar. Copia (Ctrl/Cmd+C) y pega aquí abajo.
+        </p>
+        <textarea
+          value={text}
+          onChange={(e) => { setText(e.target.value); setPreview(null); }}
+          placeholder="Pega aquí las filas copiadas de Excel…"
+          style={styles.exportTextarea}
+        />
+        {!preview ? (
+          <button style={{ ...styles.addProjectBtn, marginTop: 10, opacity: text.trim() ? 1 : 0.5 }} disabled={!text.trim()} onClick={process}>
+            Procesar
+          </button>
+        ) : (
+          <>
+            <div style={styles.pastePreview}>
+              Se detectaron <strong>{preview.items.length}</strong> ítems
+              {preview.categorias.length > 0 && <> en {preview.categorias.length} categorías ({preview.categorias.join(", ")})</>}.
+              {preview.skipped > 0 && <> Se ignoraron {preview.skipped} filas sin descripción.</>}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={styles.confirmCancelBtn} onClick={() => setPreview(null)}>Volver a pegar</button>
+              <button
+                style={{ ...styles.addProjectBtn, opacity: preview.items.length ? 1 : 0.5 }}
+                disabled={!preview.items.length}
+                onClick={() => onImport(preview.items)}
+              >
+                Importar {preview.items.length} ítems
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1969,4 +2219,26 @@ const styles = {
   },
   rowDeleteBtn: { background: "none", border: "none", color: "#5A6870", cursor: "pointer", padding: 4 },
   chartBox: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, padding: "16px 8px 4px", marginBottom: 18 },
+
+  // Presupuesto module
+  presSubTabs: { display: "flex", gap: 6, marginBottom: 14 },
+  presSubTabBtn: {
+    background: "#171E23", border: "1px solid #232D33", color: "#7A8A93", borderRadius: 8,
+    padding: "8px 14px", fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 500,
+  },
+  presSubTabBtnActive: { borderColor: "#F5B942", background: "#1C1A14", color: "#E8EDEF" },
+  presGroupRow: {
+    padding: "8px 16px", fontSize: 11.5, fontWeight: 700, color: "#F5B942", background: "#1C242A",
+    borderBottom: "1px solid #232D33", textTransform: "uppercase", letterSpacing: 0.3,
+  },
+  pasteBtnRow: { display: "flex", justifyContent: "flex-end", marginBottom: 10 },
+  pasteBtn: {
+    display: "flex", alignItems: "center", gap: 6, background: "#1C242A", border: "1px solid #2A3339",
+    color: "#E8EDEF", borderRadius: 8, padding: "7px 12px", fontSize: 12, cursor: "pointer",
+    fontFamily: FONT_BODY, fontWeight: 500,
+  },
+  pastePreview: {
+    fontSize: 12.5, color: "#B9C4CA", lineHeight: 1.5, background: "#1C242A", border: "1px solid #2A3339",
+    borderRadius: 8, padding: "10px 12px", marginBottom: 12,
+  },
 };
