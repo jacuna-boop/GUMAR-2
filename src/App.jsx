@@ -2,17 +2,19 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
   Plus, X, ChevronRight, ChevronDown, Sun, FileCheck, Zap, MapPin, Calendar,
   AlertTriangle, CheckCircle2, Circle, Trash2, Loader2, FileDown, Save,
-  LayoutGrid, Copy, Check,
+  LayoutGrid, Copy, Check, DollarSign, Wallet,
 } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { supabase } from "./lib/supabaseClient";
 import Login from "./components/Login";
 import {
   UPME_PHASES, ENERGIZACION_GROUPS, ENERGIZACION_MILESTONES, ENERGIZACION_TOTAL_COST,
   CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, fmtDate, fmtTime, fmtDateTime,
-  emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyProjectData, ensureFullProjectData,
+  emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyPresupuestoState, emptyPagosState,
+  emptyProjectData, ensureFullProjectData,
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData, buildReportHTML, escapeHTML,
   upmeProgress, energizacionProgress, nextEnergizacionMilestone,
+  presupuestoTotals, ordenPagado, ordenSaldo, pagosTotals, fmtMoney,
 } from "./lib/data.js";
 
 /* ---------------------------------------------------------------------
@@ -72,11 +74,11 @@ function Dashboard({ session }) {
       const { data, error } = await supabase.from("project_data").select("*").eq("project_id", id).maybeSingle();
       if (error) throw error;
       if (data) {
-        setProjectData((prev) => ({ ...prev, [id]: ensureFullProjectData({ upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma }) }));
+        setProjectData((prev) => ({ ...prev, [id]: ensureFullProjectData({ upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos }) }));
       } else {
         const fresh = emptyProjectData();
         await supabase.from("project_data").insert({
-          project_id: id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, updated_by: user.id,
+          project_id: id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, updated_by: user.id,
         });
         setProjectData((prev) => ({ ...prev, [id]: fresh }));
       }
@@ -126,6 +128,8 @@ function Dashboard({ session }) {
       upme: data.upme,
       energizacion: data.energizacion,
       cronograma: data.cronograma,
+      presupuesto: data.presupuesto,
+      pagos: data.pagos,
       updated_at: new Date().toISOString(),
       updated_by: user.id,
     });
@@ -160,7 +164,7 @@ function Dashboard({ session }) {
     setProjects((prev) => [...prev, newProject]);
     const fresh = emptyProjectData();
     await supabase.from("project_data").insert({
-      project_id: newProject.id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, updated_by: user.id,
+      project_id: newProject.id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, updated_by: user.id,
     });
     setProjectData((prev) => ({ ...prev, [newProject.id]: fresh }));
     setSelectedId(newProject.id);
@@ -206,7 +210,7 @@ function Dashboard({ session }) {
       if (error || !inserted) continue;
       const pd = bundle.projectData?.[p.id] ? ensureFullProjectData(bundle.projectData[p.id]) : emptyProjectData();
       await supabase.from("project_data").upsert({
-        project_id: inserted.id, upme: pd.upme, energizacion: pd.energizacion, cronograma: pd.cronograma, updated_by: user.id,
+        project_id: inserted.id, upme: pd.upme, energizacion: pd.energizacion, cronograma: pd.cronograma, presupuesto: pd.presupuesto, pagos: pd.pagos, updated_by: user.id,
       });
     }
     const { data } = await supabase.from("projects").select("*").order("created_at", { ascending: true });
@@ -310,10 +314,20 @@ function Dashboard({ session }) {
                     data={data.energizacion}
                     onChange={(nextEner) => updateProjectData(selectedId, (cur) => ({ ...cur, energizacion: nextEner }))}
                   />
-                ) : (
+                ) : tab === "cronograma" ? (
                   <CronogramaModule
                     data={data.cronograma}
                     onChange={(nextCrono) => updateProjectData(selectedId, (cur) => ({ ...cur, cronograma: nextCrono }))}
+                  />
+                ) : tab === "presupuesto" ? (
+                  <PresupuestoModule
+                    data={data.presupuesto}
+                    onChange={(nextPres) => updateProjectData(selectedId, (cur) => ({ ...cur, presupuesto: nextPres }))}
+                  />
+                ) : (
+                  <PagosModule
+                    data={data.pagos}
+                    onChange={(nextPagos) => updateProjectData(selectedId, (cur) => ({ ...cur, pagos: nextPagos }))}
                   />
                 )}
               </div>
@@ -476,6 +490,8 @@ function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExpo
           <TabBtn active={tab === "upme"} onClick={() => setTab("upme")} icon={<FileCheck size={14} />} label="Radicación UPME" />
           <TabBtn active={tab === "energizacion"} onClick={() => setTab("energizacion")} icon={<Zap size={14} />} label="Energización" />
           <TabBtn active={tab === "cronograma"} onClick={() => setTab("cronograma")} icon={<Calendar size={14} />} label="Cronograma" />
+          <TabBtn active={tab === "presupuesto"} onClick={() => setTab("presupuesto")} icon={<DollarSign size={14} />} label="Presupuesto" />
+          <TabBtn active={tab === "pagos"} onClick={() => setTab("pagos")} icon={<Wallet size={14} />} label="Pagos" />
         </div>
         <div style={styles.headerActions}>
           <SaveIndicator status={saveStatus} lastSaved={lastSaved} onSaveNow={onSaveNow} />
@@ -1066,6 +1082,308 @@ function CronogramaModule({ data, onChange }) {
               </td>
               <td style={styles.ovTd}>
                 <button style={styles.addRowBtn} onClick={addSeg}><Plus size={14} /></button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PresupuestoModule({ data, onChange }) {
+  const [newItem, setNewItem] = useState({ categoria: "", valorBase: "", valorEjecutado: "" });
+  const totals = presupuestoTotals(data);
+
+  const addItem = () => {
+    if (!newItem.categoria.trim() || newItem.valorBase === "") return;
+    const item = {
+      id: uid(),
+      categoria: newItem.categoria.trim(),
+      valorBase: Number(newItem.valorBase) || 0,
+      valorEjecutado: Number(newItem.valorEjecutado) || 0,
+    };
+    onChange({ ...data, items: [...data.items, item] });
+    setNewItem({ categoria: "", valorBase: "", valorEjecutado: "" });
+  };
+  const updateItem = (id, patch) => {
+    onChange({ ...data, items: data.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) });
+  };
+  const deleteItem = (id) => onChange({ ...data, items: data.items.filter((it) => it.id !== id) });
+
+  const chartData = data.items.map((it) => ({
+    name: it.categoria.length > 14 ? it.categoria.slice(0, 14) + "…" : it.categoria,
+    Base: Number(it.valorBase) || 0,
+    Ejecutado: Number(it.valorEjecutado) || 0,
+  }));
+
+  return (
+    <div>
+      <div style={styles.overviewStatRow}>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#4FA8D8" }}>{fmtMoney(totals.base)}</div>
+          <div style={styles.overviewStatLabel}>Presupuesto base</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#F5B942" }}>{fmtMoney(totals.ejecutado)}</div>
+          <div style={styles.overviewStatLabel}>Presupuesto ejecución</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.diferencia > 0 ? "#E2604F" : "#5FBF8F" }}>
+            {totals.diferencia > 0 ? "+" : ""}{fmtMoney(totals.diferencia)}
+          </div>
+          <div style={styles.overviewStatLabel}>Diferencia</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, color: totals.pct > 100 ? "#E2604F" : "#5FBF8F" }}>{totals.pct}%</div>
+          <div style={styles.overviewStatLabel}>% ejecutado vs. base</div>
+        </div>
+      </div>
+
+      {chartData.length > 0 && (
+        <div style={styles.chartBox}>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
+              <XAxis dataKey="name" tick={{ fill: "#7A8A93", fontSize: 10 }} />
+              <YAxis tick={{ fill: "#7A8A93", fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
+              <Tooltip
+                contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }}
+                formatter={(v) => fmtMoney(v)}
+              />
+              <RLegend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Base" fill="#4FA8D8" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Ejecutado" fill="#F5B942" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div style={styles.cronoTableWrap}>
+        <table style={styles.overviewTable}>
+          <thead>
+            <tr>
+              <th style={styles.ovTh}>Categoría / actividad</th>
+              <th style={styles.ovTh}>Presupuesto base</th>
+              <th style={styles.ovTh}>Presupuesto ejecución</th>
+              <th style={styles.ovTh}>Diferencia</th>
+              <th style={styles.ovTh}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.items.map((it) => {
+              const diff = (Number(it.valorEjecutado) || 0) - (Number(it.valorBase) || 0);
+              return (
+                <tr key={it.id}>
+                  <td style={styles.ovTd}>
+                    <input
+                      style={styles.miniInput}
+                      value={it.categoria}
+                      onChange={(e) => updateItem(it.id, { categoria: e.target.value })}
+                    />
+                  </td>
+                  <td style={styles.ovTd}>
+                    <input
+                      type="number"
+                      style={styles.miniInput}
+                      value={it.valorBase}
+                      onChange={(e) => updateItem(it.id, { valorBase: e.target.value })}
+                    />
+                  </td>
+                  <td style={styles.ovTd}>
+                    <input
+                      type="number"
+                      style={styles.miniInput}
+                      value={it.valorEjecutado}
+                      onChange={(e) => updateItem(it.id, { valorEjecutado: e.target.value })}
+                    />
+                  </td>
+                  <td style={{ ...styles.ovTd, color: diff > 0 ? "#E2604F" : "#5FBF8F" }}>
+                    {diff > 0 ? "+" : ""}{fmtMoney(diff)}
+                  </td>
+                  <td style={styles.ovTd}>
+                    <button style={styles.rowDeleteBtn} onClick={() => deleteItem(it.id)}><Trash2 size={13} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            <tr>
+              <td style={styles.ovTd}>
+                <input style={styles.miniInput} placeholder="Nueva categoría" value={newItem.categoria} onChange={(e) => setNewItem({ ...newItem, categoria: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}>
+                <input type="number" style={styles.miniInput} placeholder="$" value={newItem.valorBase} onChange={(e) => setNewItem({ ...newItem, valorBase: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}>
+                <input type="number" style={styles.miniInput} placeholder="$" value={newItem.valorEjecutado} onChange={(e) => setNewItem({ ...newItem, valorEjecutado: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}></td>
+              <td style={styles.ovTd}>
+                <button style={styles.addRowBtn} onClick={addItem}><Plus size={14} /></button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PagosModule({ data, onChange }) {
+  const [newOrden, setNewOrden] = useState({ numero: "", proveedor: "", valorTotal: "" });
+  const [openId, setOpenId] = useState(null);
+  const [newPago, setNewPago] = useState({ fecha: todayISO(), valor: "", concepto: "" });
+  const totals = pagosTotals(data);
+
+  const addOrden = () => {
+    if (!newOrden.numero.trim() || newOrden.valorTotal === "") return;
+    const orden = {
+      id: uid(),
+      numero: newOrden.numero.trim(),
+      proveedor: newOrden.proveedor.trim(),
+      valorTotal: Number(newOrden.valorTotal) || 0,
+      pagos: [],
+    };
+    onChange({ ...data, ordenes: [...data.ordenes, orden] });
+    setNewOrden({ numero: "", proveedor: "", valorTotal: "" });
+    setOpenId(orden.id);
+  };
+  const deleteOrden = (id) => onChange({ ...data, ordenes: data.ordenes.filter((o) => o.id !== id) });
+
+  const addPago = (ordenId) => {
+    if (!newPago.fecha || newPago.valor === "") return;
+    const pago = { id: uid(), fecha: newPago.fecha, valor: Number(newPago.valor) || 0, concepto: newPago.concepto.trim() };
+    onChange({
+      ...data,
+      ordenes: data.ordenes.map((o) => (o.id === ordenId ? { ...o, pagos: [...o.pagos, pago] } : o)),
+    });
+    setNewPago({ fecha: todayISO(), valor: "", concepto: "" });
+  };
+  const deletePago = (ordenId, pagoId) => {
+    onChange({
+      ...data,
+      ordenes: data.ordenes.map((o) => (o.id === ordenId ? { ...o, pagos: o.pagos.filter((p) => p.id !== pagoId) } : o)),
+    });
+  };
+
+  return (
+    <div>
+      <div style={styles.overviewStatRow}>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18 }}>{fmtMoney(totals.totalOrdenes)}</div>
+          <div style={styles.overviewStatLabel}>Total en órdenes de servicio</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#5FBF8F" }}>{fmtMoney(totals.totalPagado)}</div>
+          <div style={styles.overviewStatLabel}>Total pagado</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}>{fmtMoney(totals.totalSaldo)}</div>
+          <div style={styles.overviewStatLabel}>Saldo pendiente</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={styles.overviewStatNum}>{data.ordenes.length}</div>
+          <div style={styles.overviewStatLabel}>Órdenes de servicio</div>
+        </div>
+      </div>
+
+      <div style={styles.cronoTableWrap}>
+        <table style={styles.overviewTable}>
+          <thead>
+            <tr>
+              <th style={styles.ovTh}>Orden de servicio</th>
+              <th style={styles.ovTh}>Proveedor</th>
+              <th style={styles.ovTh}>Valor total</th>
+              <th style={styles.ovTh}>Pagado / Saldo</th>
+              <th style={styles.ovTh}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.ordenes.map((o) => {
+              const pagado = ordenPagado(o);
+              const saldo = ordenSaldo(o);
+              const pct = o.valorTotal ? Math.min(100, Math.round((pagado / o.valorTotal) * 100)) : 0;
+              const isOpen = openId === o.id;
+              return (
+                <React.Fragment key={o.id}>
+                  <tr style={styles.ovRow} onClick={() => setOpenId(isOpen ? null : o.id)}>
+                    <td style={styles.ovTdName}>
+                      <div style={{ fontWeight: 600 }}>{o.numero}</div>
+                    </td>
+                    <td style={styles.ovTd}>{o.proveedor || "—"}</td>
+                    <td style={styles.ovTd}>{fmtMoney(o.valorTotal)}</td>
+                    <td style={styles.ovTd}>
+                      <OvBar pct={pct} color={saldo <= 0 ? "#5FBF8F" : "#F5B942"} />
+                      <div style={{ fontSize: 10.5, color: "#7A8A93", marginTop: 3, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {fmtMoney(pagado)} pagado · saldo {fmtMoney(saldo)}
+                      </div>
+                    </td>
+                    <td style={styles.ovTd}>
+                      <button style={styles.rowDeleteBtn} onClick={(e) => { e.stopPropagation(); deleteOrden(o.id); }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr>
+                      <td colSpan={5} style={{ ...styles.ovTd, background: "#12181C" }}>
+                        <div style={{ padding: "6px 4px" }}>
+                          <table style={styles.overviewTable}>
+                            <thead>
+                              <tr>
+                                <th style={styles.ovTh}>Fecha de pago</th>
+                                <th style={styles.ovTh}>Valor</th>
+                                <th style={styles.ovTh}>Concepto</th>
+                                <th style={styles.ovTh}></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {o.pagos.map((p) => (
+                                <tr key={p.id}>
+                                  <td style={styles.ovTd}>{fmtDate(p.fecha)}</td>
+                                  <td style={styles.ovTd}>{fmtMoney(p.valor)}</td>
+                                  <td style={styles.ovTd}>{p.concepto || "—"}</td>
+                                  <td style={styles.ovTd}>
+                                    <button style={styles.rowDeleteBtn} onClick={() => deletePago(o.id, p.id)}><Trash2 size={13} /></button>
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr>
+                                <td style={styles.ovTd}>
+                                  <input type="date" style={styles.miniInput} value={newPago.fecha} onChange={(e) => setNewPago({ ...newPago, fecha: e.target.value })} />
+                                </td>
+                                <td style={styles.ovTd}>
+                                  <input type="number" style={styles.miniInput} placeholder="$" value={newPago.valor} onChange={(e) => setNewPago({ ...newPago, valor: e.target.value })} />
+                                </td>
+                                <td style={styles.ovTd}>
+                                  <input style={styles.miniInput} placeholder="Concepto (opcional)" value={newPago.concepto} onChange={(e) => setNewPago({ ...newPago, concepto: e.target.value })} />
+                                </td>
+                                <td style={styles.ovTd}>
+                                  <button style={styles.addRowBtn} onClick={() => addPago(o.id)}><Plus size={14} /></button>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+            <tr>
+              <td style={styles.ovTd}>
+                <input style={styles.miniInput} placeholder="N.° de orden" value={newOrden.numero} onChange={(e) => setNewOrden({ ...newOrden, numero: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}>
+                <input style={styles.miniInput} placeholder="Proveedor" value={newOrden.proveedor} onChange={(e) => setNewOrden({ ...newOrden, proveedor: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}>
+                <input type="number" style={styles.miniInput} placeholder="$" value={newOrden.valorTotal} onChange={(e) => setNewOrden({ ...newOrden, valorTotal: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}></td>
+              <td style={styles.ovTd}>
+                <button style={styles.addRowBtn} onClick={addOrden}><Plus size={14} /></button>
               </td>
             </tr>
           </tbody>

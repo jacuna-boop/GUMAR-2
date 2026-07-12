@@ -226,17 +226,65 @@ function emptyCronogramaState() {
   };
 }
 
-function emptyProjectData() {
-  return { upme: emptyUpmeState(), energizacion: emptyEnergizacionState(), cronograma: emptyCronogramaState() };
+function emptyPresupuestoState() {
+  return {
+    items: [], // { id, categoria, valorBase, valorEjecutado }
+  };
 }
 
-// Adds any fields missing from older saved data (e.g. projects created before "cronograma" existed)
+function emptyPagosState() {
+  return {
+    ordenes: [], // { id, numero, proveedor, valorTotal, pagos: [{ id, fecha, valor, concepto }] }
+  };
+}
+
+function emptyProjectData() {
+  return {
+    upme: emptyUpmeState(),
+    energizacion: emptyEnergizacionState(),
+    cronograma: emptyCronogramaState(),
+    presupuesto: emptyPresupuestoState(),
+    pagos: emptyPagosState(),
+  };
+}
+
+// Adds any fields missing from older saved data (e.g. projects created before "presupuesto"/"pagos" existed)
 function ensureFullProjectData(data) {
   return {
     upme: data?.upme || emptyUpmeState(),
     energizacion: data?.energizacion || emptyEnergizacionState(),
     cronograma: data?.cronograma || emptyCronogramaState(),
+    presupuesto: data?.presupuesto || emptyPresupuestoState(),
+    pagos: data?.pagos || emptyPagosState(),
   };
+}
+
+function presupuestoTotals(presupuesto) {
+  const items = presupuesto?.items || [];
+  const base = items.reduce((s, i) => s + (Number(i.valorBase) || 0), 0);
+  const ejecutado = items.reduce((s, i) => s + (Number(i.valorEjecutado) || 0), 0);
+  const diferencia = ejecutado - base;
+  const pct = base ? Math.round((ejecutado / base) * 100) : 0;
+  return { base, ejecutado, diferencia, pct };
+}
+
+function ordenPagado(orden) {
+  return (orden.pagos || []).reduce((s, p) => s + (Number(p.valor) || 0), 0);
+}
+function ordenSaldo(orden) {
+  return (Number(orden.valorTotal) || 0) - ordenPagado(orden);
+}
+function pagosTotals(pagos) {
+  const ordenes = pagos?.ordenes || [];
+  const totalOrdenes = ordenes.reduce((s, o) => s + (Number(o.valorTotal) || 0), 0);
+  const totalPagado = ordenes.reduce((s, o) => s + ordenPagado(o), 0);
+  const totalSaldo = totalOrdenes - totalPagado;
+  return { totalOrdenes, totalPagado, totalSaldo };
+}
+
+function fmtMoney(n) {
+  const num = Number(n) || 0;
+  return num.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 }
 
 function fractionElapsed(startISO, endISO, dateISO) {
@@ -420,6 +468,8 @@ export {
   emptyUpmeState,
   emptyEnergizacionState,
   emptyCronogramaState,
+  emptyPresupuestoState,
+  emptyPagosState,
   emptyProjectData,
   ensureFullProjectData,
   fractionElapsed,
@@ -430,4 +480,9 @@ export {
   upmeProgress,
   energizacionProgress,
   nextEnergizacionMilestone,
+  presupuestoTotals,
+  ordenPagado,
+  ordenSaldo,
+  pagosTotals,
+  fmtMoney,
 };
