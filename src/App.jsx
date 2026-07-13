@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Plus, X, ChevronRight, ChevronDown, Sun, FileCheck, Zap, MapPin, Calendar,
   AlertTriangle, CheckCircle2, Circle, Trash2, Loader2, FileDown, Save,
@@ -123,7 +123,7 @@ function Dashboard({ session }) {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const persistProjectData = useCallback(async (id, data) => {
+  const persistProjectData = useCallback(async (id, data, attempt = 1) => {
     setSaveStatus("saving");
     const { error } = await supabase.from("project_data").upsert({
       project_id: id,
@@ -136,6 +136,11 @@ function Dashboard({ session }) {
       updated_by: user.id,
     });
     if (error) {
+      console.error("Error guardando project_data:", error.message || error);
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 600 * attempt));
+        return persistProjectData(id, data, attempt + 1);
+      }
       setSaveError(true);
       setSaveStatus("idle");
     } else {
@@ -144,20 +149,59 @@ function Dashboard({ session }) {
     }
   }, [user.id]);
 
+  // Agrupa varios cambios rápidos (p. ej. escribir en un campo de texto) en un solo guardado,
+  // en vez de mandar una petición a Supabase por cada tecla — eso era lo que causaba los
+  // "No se pudo guardar" al escribir rápido.
+  const saveTimers = useRef({});
+  const pendingData = useRef({});
+  const debouncedPersist = useCallback((id, data) => {
+    pendingData.current[id] = data;
+    if (saveTimers.current[id]) clearTimeout(saveTimers.current[id]);
+    saveTimers.current[id] = setTimeout(() => {
+      const toSave = pendingData.current[id];
+      delete pendingData.current[id];
+      delete saveTimers.current[id];
+      persistProjectData(id, toSave);
+    }, 700);
+  }, [persistProjectData]);
+
   const saveNow = useCallback(async () => {
-    if (selectedId && projectData[selectedId]) {
-      await persistProjectData(selectedId, projectData[selectedId]);
+    if (selectedId && saveTimers.current[selectedId]) {
+      clearTimeout(saveTimers.current[selectedId]);
+      delete saveTimers.current[selectedId];
+    }
+    const toSave = (selectedId && pendingData.current[selectedId]) || projectData[selectedId];
+    if (selectedId && pendingData.current[selectedId]) delete pendingData.current[selectedId];
+    if (selectedId && toSave) {
+      await persistProjectData(selectedId, toSave);
     }
   }, [selectedId, projectData, persistProjectData]);
 
   const updateProjectData = (id, updater) => {
+    setSaveStatus("saving");
     setProjectData((prev) => {
       const current = prev[id] || emptyProjectData();
       const next = updater(current);
-      persistProjectData(id, next);
+      debouncedPersist(id, next);
       return { ...prev, [id]: next };
     });
   };
+
+  // Guarda cualquier cambio pendiente si la persona cierra o cambia de pestaña
+  useEffect(() => {
+    const flushAll = () => {
+      Object.keys(saveTimers.current).forEach((id) => {
+        clearTimeout(saveTimers.current[id]);
+        const toSave = pendingData.current[id];
+        if (toSave) persistProjectData(id, toSave);
+      });
+    };
+    window.addEventListener("beforeunload", flushAll);
+    return () => {
+      window.removeEventListener("beforeunload", flushAll);
+      flushAll();
+    };
+  }, [persistProjectData]);
 
   const addProject = async (name, capacity, location) => {
     const { data, error } = await supabase.from("projects").insert({ name, capacity, location, created_by: user.id }).select().single();
