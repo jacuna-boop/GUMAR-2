@@ -260,13 +260,23 @@ function ensureFullProjectData(data) {
     rawPresupuesto && (rawPresupuesto.base || rawPresupuesto.ejecucion)
       ? { base: rawPresupuesto.base || [], ejecucion: rawPresupuesto.ejecucion || [] }
       : emptyPresupuestoState();
-  return {
-    upme: data?.upme || emptyUpmeState(),
-    energizacion: data?.energizacion || emptyEnergizacionState(),
-    cronograma: data?.cronograma || emptyCronogramaState(),
-    presupuesto,
-    pagos: data?.pagos || emptyPagosState(),
-  };
+
+  const rawPagos = data?.pagos;
+  const pagos = rawPagos && Array.isArray(rawPagos.ordenes) ? { ordenes: rawPagos.ordenes } : emptyPagosState();
+
+  const rawCronograma = data?.cronograma;
+  const cronograma =
+    rawCronograma && Array.isArray(rawCronograma.tasks)
+      ? { tasks: rawCronograma.tasks, seguimiento: Array.isArray(rawCronograma.seguimiento) ? rawCronograma.seguimiento : [] }
+      : emptyCronogramaState();
+
+  const rawUpme = data?.upme;
+  const upme = rawUpme && rawUpme.phases ? rawUpme : emptyUpmeState();
+
+  const rawEner = data?.energizacion;
+  const energizacion = rawEner && Array.isArray(rawEner.milestones) ? rawEner : emptyEnergizacionState();
+
+  return { upme, energizacion, cronograma, presupuesto, pagos };
 }
 
 // Calcula valor unitario con IVA, valor total e IVA recuperable de una línea de presupuesto
