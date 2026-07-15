@@ -409,14 +409,15 @@ function fractionElapsed(startISO, endISO, dateISO) {
 }
 
 function cronogramaPesoTotal(tasks) {
-  return tasks.reduce((s, t) => s + (Number(t.peso) || 0), 0);
+  return tasks.filter((t) => !t.esGrupo).reduce((s, t) => s + (Number(t.peso) || 0), 0);
 }
 
 // Builds the merged baseline ("línea base") vs actual ("seguimiento") S-curve series for the chart
 function buildCurvaSData(cronograma) {
   const { tasks, seguimiento } = cronograma;
+  const leafTasks = tasks.filter((t) => !t.esGrupo);
   const dateSet = new Set();
-  tasks.forEach((t) => {
+  leafTasks.forEach((t) => {
     if (t.fechaInicio) dateSet.add(t.fechaInicio);
     if (t.fechaFin) dateSet.add(t.fechaFin);
   });
@@ -428,7 +429,7 @@ function buildCurvaSData(cronograma) {
   const sortedSeg = [...seguimiento].filter((s) => s.fecha).sort((a, b) => a.fecha.localeCompare(b.fecha));
 
   return sortedDates.map((date) => {
-    const base = tasks.reduce((sum, t) => {
+    const base = leafTasks.reduce((sum, t) => {
       if (!t.fechaInicio || !t.fechaFin) return sum;
       return sum + (Number(t.peso) || 0) * fractionElapsed(t.fechaInicio, t.fechaFin, date);
     }, 0);
@@ -440,6 +441,85 @@ function buildCurvaSData(cronograma) {
       real: lastSeg ? Number(lastSeg.avance) : null,
     };
   });
+}
+
+// Convierte una fecha de MS Project como "mar 20/01/26" o "20/01/2026" a formato ISO (aaaa-mm-dd)
+function parseProjectDate(str) {
+  if (!str) return "";
+  const m = String(str).trim().match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*$/);
+  if (!m) return "";
+  let [, d, mo, y] = m;
+  d = d.padStart(2, "0");
+  mo = mo.padStart(2, "0");
+  if (y.length === 2) y = "20" + y;
+  return `${y}-${mo}-${d}`;
+}
+
+// Calcula avance actual ponderado a partir del % completado de cada tarea hoja (para el punto
+// más reciente de la curva de seguimiento, cuando se importa/actualiza desde MS Project).
+function cronogramaAvanceActual(tasks) {
+  const leaf = (tasks || []).filter((t) => !t.esGrupo);
+  const pesoTotal = leaf.reduce((s, t) => s + (Number(t.peso) || 0), 0);
+  if (!pesoTotal) return 0;
+  const avance = leaf.reduce((s, t) => s + (Number(t.peso) || 0) * (Number(t.pctCompletado) || 0) / 100, 0);
+  return Math.round((avance / pesoTotal) * pesoTotal * 10) / 10; // = avance ponderado sobre 100
+}
+
+// Parsea filas copiadas/pegadas desde MS Project (o Excel con las mismas columnas) para el cronograma.
+// Usa la fila de encabezado para ubicar las columnas, así que es tolerante a columnas de más
+// (como "Modo de tarea", que no trae texto útil al copiar) o a un orden distinto.
+// Heurística de agrupación: una fila cuya "Duración" no es "0 días" se trata como fila de
+// resumen/categoría (como "PROCURA EQUIPOS PRINCIPALES"), ya que en cronogramas de este tipo
+// las tareas puntuales quedan con 0 días. Se puede corregir manualmente después de importar.
+function parseCronogramaPaste(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return { tasks: [], skipped: 0 };
+
+  const headerCols = lines[0].split("\t").map((c) => c.trim().toLowerCase());
+  const findCol = (...keywords) => headerCols.findIndex((c) => keywords.some((k) => c.includes(k)));
+  const idxId = findCol("id");
+  const idxNombre = findCol("nombre");
+  const idxDuracion = findCol("duraci");
+  const idxComienzo = findCol("comienzo", "inicio");
+  const idxFin = findCol("fin");
+  const idxPred = findCol("predecesor");
+  const idxPct = findCol("completado");
+
+  const hasHeader = idxNombre !== -1 && idxComienzo !== -1;
+  const dataLines = hasHeader ? lines.slice(1) : lines;
+
+  const tasks = [];
+  let skipped = 0;
+  dataLines.forEach((line) => {
+    const cols = line.split("\t");
+    const nombre = (idxNombre !== -1 ? cols[idxNombre] : cols[1] || "").trim();
+    if (!nombre) {
+      skipped++;
+      return;
+    }
+    const duracionTexto = (idxDuracion !== -1 ? cols[idxDuracion] : "").trim();
+    const fechaInicio = parseProjectDate(idxComienzo !== -1 ? cols[idxComienzo] : "");
+    const fechaFin = parseProjectDate(idxFin !== -1 ? cols[idxFin] : "");
+    const predecesoras = (idxPred !== -1 ? cols[idxPred] : "").trim();
+    const pctCompletado = idxPct !== -1 ? parsePercentValue(cols[idxPct]) : 0;
+    const displayId = (idxId !== -1 ? cols[idxId] : "").trim();
+    const esGrupo = !!duracionTexto && !/^0\s/.test(duracionTexto);
+    tasks.push({
+      id: uid(), displayId, nombre, duracionTexto, fechaInicio, fechaFin,
+      predecesoras, pctCompletado, esGrupo, peso: 0,
+    });
+  });
+
+  const leaf = tasks.filter((t) => !t.esGrupo);
+  if (leaf.length) {
+    const pesoIgual = Math.round((100 / leaf.length) * 10) / 10;
+    leaf.forEach((t) => { t.peso = pesoIgual; });
+  }
+
+  return { tasks, skipped };
 }
 
 const STATUS_LABELS = {
@@ -588,6 +668,9 @@ export {
   fractionElapsed,
   cronogramaPesoTotal,
   buildCurvaSData,
+  parseProjectDate,
+  cronogramaAvanceActual,
+  parseCronogramaPaste,
   buildReportHTML,
   escapeHTML,
   upmeProgress,

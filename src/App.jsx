@@ -13,6 +13,7 @@ import {
   emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyPresupuestoState, emptyPagosState,
   emptyProjectData, ensureFullProjectData,
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData, buildReportHTML, escapeHTML,
+  parseCronogramaPaste, cronogramaAvanceActual,
   upmeProgress, energizacionProgress, nextEnergizacionMilestone,
   presupuestoTotals, presupuestoListTotal, groupPresupuestoItems, calcPresupuestoItem, parsePresupuestoPaste,
   ordenPagado, ordenSaldo, pagosTotals, fmtMoney,
@@ -103,7 +104,12 @@ function Dashboard({ session }) {
     missing.forEach((p) => loadProjectData(p.id));
   }, [view, projects, projectData, loadProjectData]);
 
-  // Realtime: reflect teammates' changes without a manual refresh
+  // Realtime: reflect teammates' changes without a manual refresh — but never for the project
+  // the person has open right now, since a self-echoed refresh could race with a pending save
+  // and silently revert an edit (this was the "se ve guardado pero al reabrir no está" bug).
+  const selectedIdRef = useRef(null);
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
+
   useEffect(() => {
     const channel = supabase
       .channel("crm-realtime")
@@ -115,6 +121,7 @@ function Dashboard({ session }) {
       .on("postgres_changes", { event: "*", schema: "public", table: "project_data" }, (payload) => {
         const pid = payload.new?.project_id || payload.old?.project_id;
         if (!pid) return;
+        if (pid === selectedIdRef.current) return; // evita pisar lo que la persona está editando ahora mismo
         supabase.from("project_data").select("*").eq("project_id", pid).maybeSingle().then(({ data }) => {
           if (data) setProjectData((prev) => ({ ...prev, [pid]: ensureFullProjectData(data) }));
         });
@@ -125,18 +132,22 @@ function Dashboard({ session }) {
 
   const persistProjectData = useCallback(async (id, data, attempt = 1) => {
     setSaveStatus("saving");
-    const { error } = await supabase.from("project_data").upsert({
-      project_id: id,
-      upme: data.upme,
-      energizacion: data.energizacion,
-      cronograma: data.cronograma,
-      presupuesto: data.presupuesto,
-      pagos: data.pagos,
-      updated_at: new Date().toISOString(),
-      updated_by: user.id,
-    });
-    if (error) {
-      console.error("Error guardando project_data:", error.message || error);
+    const { data: saved, error } = await supabase
+      .from("project_data")
+      .upsert({
+        project_id: id,
+        upme: data.upme,
+        energizacion: data.energizacion,
+        cronograma: data.cronograma,
+        presupuesto: data.presupuesto,
+        pagos: data.pagos,
+        updated_at: new Date().toISOString(),
+        updated_by: user.id,
+      })
+      .select()
+      .maybeSingle();
+    if (error || !saved) {
+      console.error("Error guardando project_data:", error?.message || "upsert no devolvió la fila guardada (posible bloqueo de permisos)");
       if (attempt < 3) {
         await new Promise((r) => setTimeout(r, 600 * attempt));
         return persistProjectData(id, data, attempt + 1);
@@ -621,6 +632,8 @@ function Resumen({ data }) {
   const enerPct = energizacionProgress(data.energizacion);
   const nextMs = nextEnergizacionMilestone(data.energizacion);
   const elapsed = daysBetween(data.energizacion.fechaInicio, todayISO());
+  const presTotals = presupuestoTotals(data.presupuesto);
+  const pagTotals = pagosTotals(data.pagos);
 
   const currentUpmePhase = UPME_PHASES.find((p) => data.upme.phases[p.id].status !== "aprobado") || UPME_PHASES[UPME_PHASES.length - 1];
 
@@ -640,6 +653,12 @@ function Resumen({ data }) {
       }
     }
   });
+  if (presTotals.diferencia > 0) {
+    alerts.push(`Presupuesto: la ejecución supera la base en ${fmtMoney(presTotals.diferencia)} (${presTotals.pct}%).`);
+  }
+  if (pagTotals.totalSaldo > 0) {
+    alerts.push(`Pagos: hay ${fmtMoney(pagTotals.totalSaldo)} en saldo pendiente por pagar.`);
+  }
 
   return (
     <div style={styles.resumenGrid}>
@@ -660,6 +679,31 @@ function Resumen({ data }) {
         <BigPct pct={enerPct} color="#F5B942" />
         <div style={styles.cardSub}>
           Día {elapsed} de 200 · {nextMs ? `Siguiente: ${nextMs.title} (día ${nextMs.day})` : "Todas las actividades completadas"}
+        </div>
+      </div>
+
+      <div style={styles.card}>
+        <div style={styles.cardHead}>
+          <DollarSign size={16} color="#7FD08A" />
+          <span>Presupuesto</span>
+        </div>
+        <BigPct pct={presTotals.pct} color={presTotals.pct > 100 ? "#E2604F" : "#7FD08A"} />
+        <div style={styles.cardSub}>
+          Base {fmtMoney(presTotals.base)} · Ejecución {fmtMoney(presTotals.ejecutado)}
+          {presTotals.diferencia !== 0 && (
+            <> · {presTotals.diferencia > 0 ? "+" : ""}{fmtMoney(presTotals.diferencia)}</>
+          )}
+        </div>
+      </div>
+
+      <div style={styles.card}>
+        <div style={styles.cardHead}>
+          <Wallet size={16} color="#E77DA8" />
+          <span>Pagos</span>
+        </div>
+        <BigPct pct={pagTotals.totalOrdenes ? Math.round((pagTotals.totalPagado / pagTotals.totalOrdenes) * 100) : 0} color="#E77DA8" />
+        <div style={styles.cardSub}>
+          {fmtMoney(pagTotals.totalPagado)} pagado de {fmtMoney(pagTotals.totalOrdenes)} · saldo {fmtMoney(pagTotals.totalSaldo)}
         </div>
       </div>
 
@@ -695,13 +739,18 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
     const nextMs = nextEnergizacionMilestone(d.energizacion);
     const elapsed = daysBetween(d.energizacion.fechaInicio, todayISO());
     const delayed = nextMs && nextMs.delayed;
-    return { project: p, loading: false, upmePct, enerPct, nextMs, elapsed, delayed };
+    const pres = presupuestoTotals(d.presupuesto);
+    const pag = pagosTotals(d.pagos);
+    return { project: p, loading: false, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag };
   });
 
   const loaded = rows.filter((r) => !r.loading);
   const avgUpme = loaded.length ? Math.round(loaded.reduce((s, r) => s + r.upmePct, 0) / loaded.length) : 0;
   const avgEner = loaded.length ? Math.round(loaded.reduce((s, r) => s + r.enerPct, 0) / loaded.length) : 0;
   const delayedCount = loaded.filter((r) => r.delayed).length;
+  const totalBase = loaded.reduce((s, r) => s + r.pres.base, 0);
+  const totalEjecutado = loaded.reduce((s, r) => s + r.pres.ejecutado, 0);
+  const totalSaldo = loaded.reduce((s, r) => s + r.pag.totalSaldo, 0);
 
   return (
     <div>
@@ -724,6 +773,21 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
         </div>
       </div>
 
+      <div style={styles.overviewStatRow}>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: "#7FD08A" }}>{fmtMoney(totalBase)}</div>
+          <div style={styles.overviewStatLabel}>Presupuesto base (todos los proyectos)</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: "#7FD08A" }}>{fmtMoney(totalEjecutado)}</div>
+          <div style={styles.overviewStatLabel}>Presupuesto ejecución (todos)</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}>{fmtMoney(totalSaldo)}</div>
+          <div style={styles.overviewStatLabel}>Saldo pendiente por pagar (todos)</div>
+        </div>
+      </div>
+
       <div style={styles.overviewTableWrap}>
         <table style={styles.overviewTable}>
           <thead>
@@ -731,23 +795,27 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
               <th style={styles.ovTh}>Proyecto</th>
               <th style={styles.ovTh}>UPME</th>
               <th style={styles.ovTh}>Energización</th>
+              <th style={styles.ovTh}>Presupuesto</th>
+              <th style={styles.ovTh}>Saldo pendiente</th>
               <th style={styles.ovTh}>Día</th>
               <th style={styles.ovTh}>Siguiente hito</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ project: p, loading, upmePct, enerPct, nextMs, elapsed, delayed }) => (
+            {rows.map(({ project: p, loading, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag }) => (
               <tr key={p.id} style={styles.ovRow} onClick={() => onOpenProject(p.id)}>
                 <td style={styles.ovTdName}>
                   <div style={{ fontWeight: 600 }}>{p.name}</div>
                   <div style={styles.ovTdMeta}>{p.capacity ? `${p.capacity} MWp` : ""}{p.location ? ` · ${p.location}` : ""}</div>
                 </td>
                 {loading ? (
-                  <td colSpan={4} style={styles.ovTd}>Cargando…</td>
+                  <td colSpan={6} style={styles.ovTd}>Cargando…</td>
                 ) : (
                   <>
                     <td style={styles.ovTd}><OvBar pct={upmePct} color="#4FA8D8" /></td>
                     <td style={styles.ovTd}><OvBar pct={enerPct} color="#F5B942" /></td>
+                    <td style={styles.ovTd}><OvBar pct={pres.pct} color={pres.pct > 100 ? "#E2604F" : "#7FD08A"} /></td>
+                    <td style={{ ...styles.ovTd, color: pag.totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}>{fmtMoney(pag.totalSaldo)}</td>
                     <td style={styles.ovTd}>{elapsed} / 200</td>
                     <td style={{ ...styles.ovTd, color: delayed ? "#E2604F" : "#B9C4CA" }}>
                       {nextMs ? `${nextMs.title} (día ${nextMs.day})${delayed ? " · atrasado" : ""}` : "Completado"}
@@ -1033,19 +1101,31 @@ function EnergizacionModule({ data, onChange }) {
 function CronogramaModule({ data, onChange }) {
   const [newTask, setNewTask] = useState({ nombre: "", fechaInicio: "", fechaFin: "", peso: "" });
   const [newSeg, setNewSeg] = useState({ fecha: todayISO(), avance: "" });
+  const [showPaste, setShowPaste] = useState(false);
 
   const pesoTotal = cronogramaPesoTotal(data.tasks);
   const curvaData = buildCurvaSData(data);
   const lastReal = [...data.seguimiento].filter((s) => s.fecha).sort((a, b) => a.fecha.localeCompare(b.fecha)).pop();
+  const avanceHoy = cronogramaAvanceActual(data.tasks);
 
   const addTask = () => {
     if (!newTask.nombre.trim() || !newTask.fechaInicio || !newTask.fechaFin || newTask.peso === "") return;
-    const task = { id: uid(), nombre: newTask.nombre.trim(), fechaInicio: newTask.fechaInicio, fechaFin: newTask.fechaFin, peso: Number(newTask.peso) };
+    const task = { id: uid(), nombre: newTask.nombre.trim(), fechaInicio: newTask.fechaInicio, fechaFin: newTask.fechaFin, peso: Number(newTask.peso), esGrupo: false };
     onChange({ ...data, tasks: [...data.tasks, task] });
     setNewTask({ nombre: "", fechaInicio: "", fechaFin: "", peso: "" });
   };
   const updateTask = (id, patch) => onChange({ ...data, tasks: data.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
   const deleteTask = (id) => onChange({ ...data, tasks: data.tasks.filter((t) => t.id !== id) });
+
+  const registrarAvanceHoy = () => {
+    const hoy = todayISO();
+    const existing = data.seguimiento.find((s) => s.fecha === hoy);
+    if (existing) {
+      onChange({ ...data, seguimiento: data.seguimiento.map((s) => (s.fecha === hoy ? { ...s, avance: avanceHoy } : s)) });
+    } else {
+      onChange({ ...data, seguimiento: [...data.seguimiento, { id: uid(), fecha: hoy, avance: avanceHoy }] });
+    }
+  };
 
   const addSeg = () => {
     if (!newSeg.fecha || newSeg.avance === "") return;
@@ -1056,34 +1136,61 @@ function CronogramaModule({ data, onChange }) {
   const updateSeg = (id, patch) => onChange({ ...data, seguimiento: data.seguimiento.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
   const deleteSeg = (id) => onChange({ ...data, seguimiento: data.seguimiento.filter((s) => s.id !== id) });
 
-  const sortedTasks = [...data.tasks].sort((a, b) => (a.fechaInicio || "").localeCompare(b.fechaInicio || ""));
-  const sortedSeg = [...data.seguimiento].sort((a, b) => a.fecha.localeCompare(b.fecha));
-
   return (
     <div>
       <div style={styles.cronoHead}>
         <h3 style={styles.h3}>Cronograma de obra</h3>
-        <span style={{ ...styles.pesoTotalTag, color: Math.round(pesoTotal) === 100 ? "#5FBF8F" : "#E8A33D" }}>
-          peso total: {pesoTotal}% {Math.round(pesoTotal) !== 100 ? "(debería sumar 100%)" : ""}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ ...styles.pesoTotalTag, color: Math.round(pesoTotal) === 100 ? "#5FBF8F" : "#E8A33D" }}>
+            peso total: {pesoTotal}% {Math.round(pesoTotal) !== 100 ? "(debería sumar 100%)" : ""}
+          </span>
+          <button style={styles.pasteBtn} onClick={() => setShowPaste(true)}>
+            <ClipboardPaste size={14} /> Pegar desde Project/Excel
+          </button>
+        </div>
       </div>
+
+      {showPaste && (
+        <PasteCronogramaModal
+          onClose={() => setShowPaste(false)}
+          onImport={(newTasks) => {
+            onChange({ ...data, tasks: [...data.tasks, ...newTasks] });
+            setShowPaste(false);
+          }}
+        />
+      )}
 
       <div style={styles.cronoTableWrap}>
         <table style={styles.overviewTable}>
           <thead>
             <tr>
+              <th style={styles.ovTh}>Id</th>
               <th style={styles.ovTh}>Actividad</th>
+              <th style={styles.ovTh}>Duración</th>
               <th style={styles.ovTh}>Inicio</th>
               <th style={styles.ovTh}>Fin</th>
+              <th style={styles.ovTh}>Predecesoras</th>
+              <th style={styles.ovTh}>% Compl.</th>
               <th style={styles.ovTh}>Peso %</th>
+              <th style={styles.ovTh}>Grupo</th>
               <th style={styles.ovTh}></th>
             </tr>
           </thead>
           <tbody>
-            {sortedTasks.map((t) => (
-              <tr key={t.id}>
+            {data.tasks.map((t) => (
+              <tr key={t.id} style={t.esGrupo ? { background: "#1C242A" } : undefined}>
                 <td style={styles.ovTd}>
-                  <input style={styles.miniInput} value={t.nombre} onChange={(e) => updateTask(t.id, { nombre: e.target.value })} />
+                  <input style={{ ...styles.miniInput, width: 44 }} value={t.displayId || ""} onChange={(e) => updateTask(t.id, { displayId: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <input
+                    style={{ ...styles.miniInput, fontWeight: t.esGrupo ? 700 : 400, color: t.esGrupo ? "#F5B942" : "#E8EDEF" }}
+                    value={t.nombre}
+                    onChange={(e) => updateTask(t.id, { nombre: e.target.value })}
+                  />
+                </td>
+                <td style={styles.ovTd}>
+                  <input style={{ ...styles.miniInput, width: 70 }} value={t.duracionTexto || ""} onChange={(e) => updateTask(t.id, { duracionTexto: e.target.value })} placeholder="0 días" />
                 </td>
                 <td style={styles.ovTd}>
                   <input type="date" style={styles.miniInput} value={t.fechaInicio} onChange={(e) => updateTask(t.id, { fechaInicio: e.target.value })} />
@@ -1092,7 +1199,16 @@ function CronogramaModule({ data, onChange }) {
                   <input type="date" style={styles.miniInput} value={t.fechaFin} onChange={(e) => updateTask(t.id, { fechaFin: e.target.value })} />
                 </td>
                 <td style={styles.ovTd}>
+                  <input style={{ ...styles.miniInput, width: 70 }} value={t.predecesoras || ""} onChange={(e) => updateTask(t.id, { predecesoras: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <input type="number" style={{ ...styles.miniInput, width: 56 }} value={t.pctCompletado || 0} onChange={(e) => updateTask(t.id, { pctCompletado: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
                   <input type="number" style={{ ...styles.miniInput, width: 60 }} value={t.peso} onChange={(e) => updateTask(t.id, { peso: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <input type="checkbox" checked={!!t.esGrupo} onChange={(e) => updateTask(t.id, { esGrupo: e.target.checked })} />
                 </td>
                 <td style={styles.ovTd}>
                   <button style={styles.rowDeleteBtn} onClick={() => deleteTask(t.id)}><Trash2 size={13} /></button>
@@ -1100,18 +1216,23 @@ function CronogramaModule({ data, onChange }) {
               </tr>
             ))}
             <tr>
+              <td style={styles.ovTd}></td>
               <td style={styles.ovTd}>
                 <input style={styles.miniInput} placeholder="Nueva actividad" value={newTask.nombre} onChange={(e) => setNewTask({ ...newTask, nombre: e.target.value })} />
               </td>
+              <td style={styles.ovTd}></td>
               <td style={styles.ovTd}>
                 <input type="date" style={styles.miniInput} value={newTask.fechaInicio} onChange={(e) => setNewTask({ ...newTask, fechaInicio: e.target.value })} />
               </td>
               <td style={styles.ovTd}>
                 <input type="date" style={styles.miniInput} value={newTask.fechaFin} onChange={(e) => setNewTask({ ...newTask, fechaFin: e.target.value })} />
               </td>
+              <td style={styles.ovTd}></td>
+              <td style={styles.ovTd}></td>
               <td style={styles.ovTd}>
                 <input type="number" style={{ ...styles.miniInput, width: 60 }} placeholder="%" value={newTask.peso} onChange={(e) => setNewTask({ ...newTask, peso: e.target.value })} />
               </td>
+              <td style={styles.ovTd}></td>
               <td style={styles.ovTd}>
                 <button style={styles.addRowBtn} onClick={addTask}><Plus size={14} /></button>
               </td>
@@ -1122,7 +1243,12 @@ function CronogramaModule({ data, onChange }) {
 
       <div style={styles.cronoHead}>
         <h3 style={styles.h3}>Curva S de construcción</h3>
-        {lastReal && <span style={styles.pesoTotalTag}>último avance real: {lastReal.avance}% ({fmtDate(lastReal.fecha)})</span>}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {lastReal && <span style={styles.pesoTotalTag}>último avance real: {lastReal.avance}% ({fmtDate(lastReal.fecha)})</span>}
+          <button style={styles.pasteBtn} onClick={registrarAvanceHoy}>
+            Registrar avance de hoy ({avanceHoy}%)
+          </button>
+        </div>
       </div>
 
       {curvaData.length === 0 ? (
@@ -1155,7 +1281,7 @@ function CronogramaModule({ data, onChange }) {
             </tr>
           </thead>
           <tbody>
-            {sortedSeg.map((s) => (
+            {[...data.seguimiento].sort((a, b) => a.fecha.localeCompare(b.fecha)).map((s) => (
               <tr key={s.id}>
                 <td style={styles.ovTd}>
                   <input type="date" style={styles.miniInput} value={s.fecha} onChange={(e) => updateSeg(s.id, { fecha: e.target.value })} />
@@ -1185,6 +1311,65 @@ function CronogramaModule({ data, onChange }) {
     </div>
   );
 }
+
+function PasteCronogramaModal({ onClose, onImport }) {
+  const [text, setText] = useState("");
+  const [preview, setPreview] = useState(null); // { tasks, skipped, grupos } | null
+
+  const process = () => {
+    const { tasks, skipped } = parseCronogramaPaste(text);
+    const grupos = tasks.filter((t) => t.esGrupo).length;
+    setPreview({ tasks, skipped, grupos });
+  };
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.exportModal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Pegar cronograma desde MS Project / Excel</h3>
+          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+        </div>
+        <p style={styles.exportHint}>
+          En MS Project, selecciona las columnas <strong>Id, Nombre de tarea, Duración, Comienzo, Fin, Predecesoras
+          y % completado</strong> (incluye la fila de encabezados) y cópialas (Ctrl/Cmd+C). Pega aquí abajo.
+          Las filas de resumen/fase (con duración distinta de "0 días") se detectan automáticamente como categorías —
+          puedes corregirlo después con la casilla "Grupo" en la tabla. El peso de cada tarea se reparte igual entre
+          todas para que sume 100%; ajústalo si tienes mejor información de costos.
+        </p>
+        <textarea
+          value={text}
+          onChange={(e) => { setText(e.target.value); setPreview(null); }}
+          placeholder="Pega aquí las filas copiadas de MS Project…"
+          style={styles.exportTextarea}
+        />
+        {!preview ? (
+          <button style={{ ...styles.addProjectBtn, marginTop: 10, opacity: text.trim() ? 1 : 0.5 }} disabled={!text.trim()} onClick={process}>
+            Procesar
+          </button>
+        ) : (
+          <>
+            <div style={styles.pastePreview}>
+              Se detectaron <strong>{preview.tasks.length}</strong> filas ({preview.grupos} de categoría/fase,{" "}
+              {preview.tasks.length - preview.grupos} tareas).
+              {preview.skipped > 0 && <> Se ignoraron {preview.skipped} filas sin nombre.</>}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={styles.confirmCancelBtn} onClick={() => setPreview(null)}>Volver a pegar</button>
+              <button
+                style={{ ...styles.addProjectBtn, opacity: preview.tasks.length ? 1 : 0.5 }}
+                disabled={!preview.tasks.length}
+                onClick={() => onImport(preview.tasks)}
+              >
+                Importar {preview.tasks.length} filas
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 function PresupuestoModule({ data, onChange }) {
   const [activeSub, setActiveSub] = useState("base"); // "base" | "ejecucion"
