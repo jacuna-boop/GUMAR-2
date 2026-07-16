@@ -8,13 +8,13 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegen
 import { supabase } from "./lib/supabaseClient";
 import Login from "./components/Login";
 import {
-  UPME_PHASES, ENERGIZACION_GROUPS, ENERGIZACION_MILESTONES, ENERGIZACION_TOTAL_COST,
+  UPME_STEPS, ENERGIZACION_GROUPS, ENERGIZACION_MILESTONES, ENERGIZACION_TOTAL_COST,
   CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, fmtDate, fmtTime, fmtDateTime,
   emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyPresupuestoState, emptyPagosState,
   emptyProjectData, ensureFullProjectData,
-  fractionElapsed, cronogramaPesoTotal, buildCurvaSData, buildReportHTML, escapeHTML,
+  fractionElapsed, cronogramaPesoTotal, buildCurvaSData,
   parseCronogramaPaste, cronogramaAvanceActual,
-  upmeProgress, energizacionProgress, nextEnergizacionMilestone,
+  upmeProgress, upmeActiveSteps, upmeNextStep, energizacionProgress, nextEnergizacionMilestone,
   presupuestoTotals, presupuestoListTotal, groupPresupuestoItems, calcPresupuestoItem, parsePresupuestoPaste,
   ordenPagado, ordenSaldo, pagosTotals, fmtMoney,
 } from "./lib/data.js";
@@ -60,6 +60,14 @@ function Dashboard({ session }) {
   const [editingProject, setEditingProject] = useState(null); // project object | null
   const [showImportText, setShowImportText] = useState(false);
   const [view, setView] = useState("overview"); // "overview" | "project"
+  const [printTarget, setPrintTarget] = useState(null); // null | "project" | "general"
+
+  useEffect(() => {
+    const onAfterPrint = () => setPrintTarget(null);
+    window.addEventListener("afterprint", onAfterPrint);
+    return () => window.removeEventListener("afterprint", onAfterPrint);
+  }, []);
+
 
   const rowToProject = (row) => ({ id: row.id, name: row.name, capacity: row.capacity, location: row.location, createdAt: row.created_at });
 
@@ -343,8 +351,17 @@ function Dashboard({ session }) {
           ) : view === "overview" ? (
             <>
               <div style={styles.overviewHeader}>
-                <h1 style={styles.h1}>Resumen general</h1>
-                <div style={styles.headerMeta}>{projects.length} proyecto{projects.length === 1 ? "" : "s"} activos</div>
+                <div>
+                  <h1 style={styles.h1}>Resumen general</h1>
+                  <div style={styles.headerMeta}>{projects.length} proyecto{projects.length === 1 ? "" : "s"} activos</div>
+                </div>
+                <button
+                  className="no-print"
+                  style={styles.pdfBtn}
+                  onClick={() => { setPrintTarget("general"); setTimeout(() => window.print(), 50); }}
+                >
+                  <FileDown size={14} /> Exportar PDF
+                </button>
               </div>
               <div style={styles.content}>
                 <ResumenGeneral projects={projects} projectData={projectData} onOpenProject={(id) => { setSelectedId(id); setView("project"); }} />
@@ -361,7 +378,7 @@ function Dashboard({ session }) {
                 saveStatus={saveStatus}
                 lastSaved={lastSaved}
                 onSaveNow={saveNow}
-                onExportPDF={() => window.print()}
+                onExportPDF={() => { setPrintTarget("project"); setTimeout(() => window.print(), 50); }}
               />
               <div style={styles.content}>
                 {!data ? (
@@ -399,7 +416,8 @@ function Dashboard({ session }) {
           )}
         </main>
       </div>
-      {selected && data && <PrintReport project={selected} data={data} />}
+      {printTarget === "project" && selected && data && <PrintResumenProject project={selected} data={data} />}
+      {printTarget === "general" && <PrintResumenGeneral projects={projects} projectData={projectData} />}
       {showAddProject && (
         <ProjectFormModal
           title="Nuevo proyecto"
@@ -579,7 +597,7 @@ function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExpo
       <div style={styles.headerRight}>
         <div style={styles.tabs}>
           <TabBtn active={tab === "resumen"} onClick={() => setTab("resumen")} icon={<MapPin size={14} />} label="Resumen" />
-          <TabBtn active={tab === "upme"} onClick={() => setTab("upme")} icon={<FileCheck size={14} />} label="Radicación UPME" />
+          <TabBtn active={tab === "upme"} onClick={() => setTab("upme")} icon={<FileCheck size={14} />} label="UPME" />
           <TabBtn active={tab === "energizacion"} onClick={() => setTab("energizacion")} icon={<Zap size={14} />} label="Energización" />
           <TabBtn active={tab === "cronograma"} onClick={() => setTab("cronograma")} icon={<Calendar size={14} />} label="Cronograma" />
           <TabBtn active={tab === "presupuesto"} onClick={() => setTab("presupuesto")} icon={<DollarSign size={14} />} label="Presupuesto" />
@@ -627,6 +645,24 @@ function TabBtn({ active, onClick, icon, label }) {
    Resumen
 --------------------------------------------------------------------- */
 
+function buildProjectAlerts(data) {
+  const nextMs = nextEnergizacionMilestone(data.energizacion);
+  const elapsed = daysBetween(data.energizacion.fechaInicio, todayISO());
+  const presTotals = presupuestoTotals(data.presupuesto);
+  const pagTotals = pagosTotals(data.pagos);
+  const alerts = [];
+  if (nextMs && nextMs.delayed) {
+    alerts.push(`Energización: el hito "${nextMs.title}" está previsto para el día ${nextMs.day} y ya vas en el día ${elapsed}.`);
+  }
+  if (presTotals.diferencia > 0) {
+    alerts.push(`Presupuesto: la ejecución supera la base en ${fmtMoney(presTotals.diferencia)} (${presTotals.pct}%).`);
+  }
+  if (pagTotals.totalSaldo > 0) {
+    alerts.push(`Pagos: hay ${fmtMoney(pagTotals.totalSaldo)} en saldo pendiente por pagar.`);
+  }
+  return alerts;
+}
+
 function Resumen({ data }) {
   const upmePct = upmeProgress(data.upme);
   const enerPct = energizacionProgress(data.energizacion);
@@ -634,41 +670,18 @@ function Resumen({ data }) {
   const elapsed = daysBetween(data.energizacion.fechaInicio, todayISO());
   const presTotals = presupuestoTotals(data.presupuesto);
   const pagTotals = pagosTotals(data.pagos);
-
-  const currentUpmePhase = UPME_PHASES.find((p) => data.upme.phases[p.id].status !== "aprobado") || UPME_PHASES[UPME_PHASES.length - 1];
-
-  const alerts = [];
-  if (nextMs && nextMs.delayed) {
-    alerts.push(`Energización: el hito "${nextMs.title}" está previsto para el día ${nextMs.day} y ya vas en el día ${elapsed}.`);
-  }
-  UPME_PHASES.forEach((p) => {
-    const ph = data.upme.phases[p.id];
-    if (ph.status === "aprobado" && ph.fechaRespuesta) {
-      const vigenciaHasta = addYears(ph.fechaRespuesta, p.vigenciaAnios);
-      const diasRestantes = daysBetween(todayISO(), vigenciaHasta);
-      if (diasRestantes <= 60 && diasRestantes >= 0) {
-        alerts.push(`UPME: la vigencia de "${p.label}" vence el ${fmtDate(vigenciaHasta)} (en ${diasRestantes} días).`);
-      } else if (diasRestantes < 0) {
-        alerts.push(`UPME: la vigencia de "${p.label}" venció el ${fmtDate(vigenciaHasta)}.`);
-      }
-    }
-  });
-  if (presTotals.diferencia > 0) {
-    alerts.push(`Presupuesto: la ejecución supera la base en ${fmtMoney(presTotals.diferencia)} (${presTotals.pct}%).`);
-  }
-  if (pagTotals.totalSaldo > 0) {
-    alerts.push(`Pagos: hay ${fmtMoney(pagTotals.totalSaldo)} en saldo pendiente por pagar.`);
-  }
+  const nextUpme = upmeNextStep(data.upme);
+  const alerts = buildProjectAlerts(data);
 
   return (
     <div style={styles.resumenGrid}>
       <div style={styles.card}>
         <div style={styles.cardHead}>
           <FileCheck size={16} color="#4FA8D8" />
-          <span>Radicación UPME</span>
+          <span>Beneficios tributarios UPME</span>
         </div>
         <BigPct pct={upmePct} color="#4FA8D8" />
-        <div style={styles.cardSub}>Fase actual: {currentUpmePhase.label}</div>
+        <div style={styles.cardSub}>{nextUpme ? `Siguiente paso: ${nextUpme.num}. ${nextUpme.label}` : "Proceso completado"}</div>
       </div>
 
       <div style={styles.card}>
@@ -857,134 +870,94 @@ function BigPct({ pct, color }) {
    UPME module
 --------------------------------------------------------------------- */
 function UpmeModule({ data, onChange }) {
-  const [openPhase, setOpenPhase] = useState(UPME_PHASES[0].id);
-
-  const setPhase = (phaseId, patch) => {
-    onChange({
-      ...data,
-      phases: {
-        ...data.phases,
-        [phaseId]: { ...data.phases[phaseId], ...patch },
-      },
-    });
+  const updateStep = (id, patch) => {
+    onChange({ ...data, steps: { ...data.steps, [id]: { ...data.steps[id], ...patch } } });
   };
 
-  const toggleItem = (phaseId, itemIdx) => {
-    const cur = data.phases[phaseId].checklist;
-    const next = cur.map((v, i) => (i === itemIdx ? !v : v));
-    setPhase(phaseId, { checklist: next });
-  };
+  const skipS7S8 = data.steps.s6?.decision === "si";
+  const skipS10S11 = data.steps.s9?.decision === "no";
+  const isSkipped = (s) => (s.id === "s7" || s.id === "s8") ? skipS7S8 : (s.id === "s10" || s.id === "s11") ? skipS10S11 : false;
+
+  const active = upmeActiveSteps(data);
+  const doneCount = active.filter((s) => data.steps[s.id]?.completado).length;
 
   return (
     <div>
-      <div style={styles.timelineStrip}>
-        {UPME_PHASES.map((p, i) => {
-          const ph = data.phases[p.id];
-          const pct = Math.round((ph.checklist.filter(Boolean).length / p.checklist.length) * 100);
-          return (
-            <React.Fragment key={p.id}>
-              <div
-                style={{ ...styles.phaseNode, ...(openPhase === p.id ? styles.phaseNodeActive : {}) }}
-                onClick={() => setOpenPhase(p.id)}
-              >
-                <div style={styles.phaseNodeCircle(pct, statusColor(ph.status))}>
-                  {ph.status === "aprobado" ? <CheckCircle2 size={16} /> : <span>{pct}%</span>}
-                </div>
-                <div style={styles.phaseNodeLabel}>{p.label}</div>
-                <StatusPill status={ph.status} />
-              </div>
-              {i < UPME_PHASES.length - 1 && <div style={styles.timelineConnector} />}
-            </React.Fragment>
-          );
-        })}
+      <div style={styles.cronoHead}>
+        <h3 style={styles.h3}>Beneficios tributarios — trámite ante la UPME</h3>
+        <span style={styles.pesoTotalTag}>{doneCount} de {active.length} pasos completados</span>
       </div>
 
-      {UPME_PHASES.filter((p) => p.id === openPhase).map((p) => {
-        const ph = data.phases[p.id];
-        const vigenciaHasta = ph.fechaRespuesta ? addYears(ph.fechaRespuesta, p.vigenciaAnios) : null;
-        return (
-          <div key={p.id} style={styles.phaseDetail}>
-            <div style={styles.phaseDetailHead}>
-              <h3 style={styles.h3}>{p.label}</h3>
-              <select
-                value={ph.status}
-                onChange={(e) => setPhase(p.id, { status: e.target.value })}
-                style={styles.select}
-              >
-                <option value="no_iniciado">No iniciado</option>
-                <option value="radicado">Radicado</option>
-                <option value="incompleto">Incompleto (subsanación)</option>
-                <option value="aprobado">Aprobado</option>
-                <option value="rechazado">Rechazado</option>
-              </select>
-            </div>
-
-            <div style={styles.dateRow}>
-              <label style={styles.dateField}>
-                <span>Fecha de radicación</span>
-                <input
-                  type="date"
-                  value={ph.fechaRadicacion}
-                  onChange={(e) => setPhase(p.id, { fechaRadicacion: e.target.value })}
-                  style={styles.input}
-                />
-              </label>
-              <label style={styles.dateField}>
-                <span>Fecha respuesta UPME</span>
-                <input
-                  type="date"
-                  value={ph.fechaRespuesta}
-                  onChange={(e) => setPhase(p.id, { fechaRespuesta: e.target.value })}
-                  style={styles.input}
-                />
-              </label>
-              <div style={styles.dateField}>
-                <span>Plazo de respuesta UPME</span>
-                <div style={styles.staticValue}>{p.plazoRespuestaDias} días hábiles</div>
+      <div style={styles.upmeStepList}>
+        {UPME_STEPS.map((s) => {
+          const st = data.steps[s.id];
+          const skipped = isSkipped(s);
+          return (
+            <div key={s.id} style={{ ...styles.upmeStepCard, ...(skipped ? styles.upmeStepCardSkipped : {}) }}>
+              <div style={styles.upmeStepHead}>
+                <div
+                  style={{
+                    ...styles.upmeStepNum,
+                    background: skipped ? "#232D33" : st.completado ? "#5FBF8F" : "#1C242A",
+                    color: skipped ? "#5A6870" : st.completado ? "#0F1417" : "#E8EDEF",
+                    borderColor: skipped ? "#2A3339" : st.completado ? "#5FBF8F" : "#4FA8D8",
+                  }}
+                >
+                  {st.completado && !skipped ? <Check size={14} /> : s.num}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ ...styles.upmeStepLabel, ...(skipped ? { color: "#5A6870", textDecoration: "line-through" } : {}) }}>
+                    {s.label}
+                  </div>
+                  {skipped && <div style={styles.upmeSkippedTag}>Omitido según la respuesta anterior</div>}
+                </div>
+                {!skipped && (
+                  <label style={styles.upmeCheckToggle}>
+                    <input type="checkbox" checked={!!st.completado} onChange={(e) => updateStep(s.id, { completado: e.target.checked })} />
+                    <span>{st.completado ? "Completado" : "Marcar como completado"}</span>
+                  </label>
+                )}
               </div>
-              {vigenciaHasta && (
-                <div style={styles.dateField}>
-                  <span>Vigente hasta</span>
-                  <div style={styles.staticValue}>{fmtDate(vigenciaHasta)}</div>
+
+              {!skipped && (
+                <div style={styles.upmeStepBody}>
+                  <label style={styles.dateField}>
+                    <span>Fecha</span>
+                    <input type="date" style={styles.input} value={st.fecha} onChange={(e) => updateStep(s.id, { fecha: e.target.value })} />
+                  </label>
+                  <input
+                    style={{ ...styles.input, flex: 1, minWidth: 160 }}
+                    placeholder="Notas (opcional)"
+                    value={st.notas}
+                    onChange={(e) => updateStep(s.id, { notas: e.target.value })}
+                  />
+                  {s.decision && (
+                    <div style={styles.upmeDecisionBox}>
+                      <span>{s.decision.question}</span>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          style={{ ...styles.presSubTabBtn, ...(st.decision === "si" ? styles.presSubTabBtnActive : {}) }}
+                          onClick={() => updateStep(s.id, { decision: "si" })}
+                        >
+                          Sí
+                        </button>
+                        <button
+                          style={{ ...styles.presSubTabBtn, ...(st.decision === "no" ? styles.presSubTabBtnActive : {}) }}
+                          onClick={() => updateStep(s.id, { decision: "no" })}
+                        >
+                          No
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-
-            <div style={styles.checklist}>
-              {p.checklist.map((item, i) => (
-                <label key={i} style={styles.checkItem} onClick={() => toggleItem(p.id, i)}>
-                  {ph.checklist[i] ? <CheckCircle2 size={16} color="#5FBF8F" /> : <Circle size={16} color="#5A6870" />}
-                  <span style={ph.checklist[i] ? styles.checkTextDone : styles.checkText}>{item}</span>
-                </label>
-              ))}
-            </div>
-
-            <textarea
-              placeholder="Notas de esta fase…"
-              value={ph.notas}
-              onChange={(e) => setPhase(p.id, { notas: e.target.value })}
-              style={styles.textarea}
-            />
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
-}
-
-function statusColor(status) {
-  return { no_iniciado: "#5A6870", radicado: "#4FA8D8", incompleto: "#E8A33D", aprobado: "#5FBF8F", rechazado: "#E2604F" }[status];
-}
-function StatusPill({ status }) {
-  const map = {
-    no_iniciado: ["No iniciado", "#5A6870"],
-    radicado: ["Radicado", "#4FA8D8"],
-    incompleto: ["Subsanación", "#E8A33D"],
-    aprobado: ["Aprobado", "#5FBF8F"],
-    rechazado: ["Rechazado", "#E2604F"],
-  };
-  const [text, color] = map[status];
-  return <span style={{ ...styles.pill, color, borderColor: color }}>{text}</span>;
 }
 
 /* ---------------------------------------------------------------------
@@ -1375,17 +1348,77 @@ function PresupuestoModule({ data, onChange }) {
   const [activeSub, setActiveSub] = useState("base"); // "base" | "ejecucion"
   const totals = presupuestoTotals(data);
 
-  const baseByCat = groupPresupuestoItems(data.base);
-  const ejecByCat = groupPresupuestoItems(data.ejecucion);
-  const catNames = Array.from(new Set([...baseByCat.map((g) => g.categoria), ...ejecByCat.map((g) => g.categoria)]));
-  const chartData = catNames.map((cat) => ({
-    name: cat.length > 16 ? cat.slice(0, 16) + "…" : cat,
-    Base: presupuestoListTotal((baseByCat.find((g) => g.categoria === cat) || {}).items),
-    Ejecución: presupuestoListTotal((ejecByCat.find((g) => g.categoria === cat) || {}).items),
+  // Compara actividad por actividad (no por capítulo): empareja los ítems de base y ejecución
+  // por su id compartido; los adicionales de ejecución (sin contraparte en base) también se muestran.
+  const itemLabel = (it) => (it.item ? `${it.item} · ${it.descripcion}` : it.descripcion) || "(sin nombre)";
+  const chartMap = new Map();
+  data.base.forEach((it) => {
+    chartMap.set(it.id, { name: itemLabel(it), Base: calcPresupuestoItem(it).valorTotal, Ejecución: 0 });
+  });
+  data.ejecucion.forEach((it) => {
+    const valorTotal = calcPresupuestoItem(it).valorTotal;
+    if (chartMap.has(it.id)) {
+      chartMap.get(it.id).Ejecución = valorTotal;
+    } else {
+      chartMap.set(it.id, { name: itemLabel(it), Base: 0, Ejecución: valorTotal });
+    }
+  });
+  const chartData = Array.from(chartMap.values()).map((d) => ({
+    ...d,
+    name: d.name.length > 22 ? d.name.slice(0, 22) + "…" : d.name,
   }));
+  const chartWidth = Math.max(700, chartData.length * 90);
 
-  const currentItems = activeSub === "base" ? data.base : data.ejecucion;
-  const setCurrentItems = (nextItems) => onChange({ ...data, [activeSub]: nextItems });
+  // Ítems de "base": al crearlos se replican automáticamente en "ejecución" (mismo id, en $0,
+  // listos para registrar lo real). Los campos de identidad (ítem/categoría/descripción/unidad)
+  // se mantienen sincronizados si se editan desde base; cantidad/valor/IVA quedan independientes.
+  const addBaseItem = (fields) => {
+    const id = uid();
+    const baseItem = { id, ...fields };
+    const ejecItem = {
+      id, item: fields.item, categoria: fields.categoria, descripcion: fields.descripcion,
+      unidad: fields.unidad, cantidad: 0, valorUnitario: 0, ivaPct: fields.ivaPct,
+    };
+    onChange({ ...data, base: [...data.base, baseItem], ejecucion: [...data.ejecucion, ejecItem] });
+  };
+  const addBaseItems = (newItems) => {
+    const ejecItems = newItems.map((it) => ({
+      id: it.id, item: it.item, categoria: it.categoria, descripcion: it.descripcion,
+      unidad: it.unidad, cantidad: 0, valorUnitario: 0, ivaPct: it.ivaPct,
+    }));
+    onChange({ ...data, base: [...data.base, ...newItems], ejecucion: [...data.ejecucion, ...ejecItems] });
+  };
+  const updateBaseItem = (id, patch) => {
+    const syncKeys = ["item", "categoria", "descripcion", "unidad"];
+    const sync = {};
+    syncKeys.forEach((k) => { if (k in patch) sync[k] = patch[k]; });
+    const hasLinked = data.ejecucion.some((it) => it.id === id);
+    onChange({
+      ...data,
+      base: data.base.map((it) => (it.id === id ? { ...it, ...patch } : it)),
+      ejecucion: hasLinked && Object.keys(sync).length
+        ? data.ejecucion.map((it) => (it.id === id ? { ...it, ...sync } : it))
+        : data.ejecucion,
+    });
+  };
+  const deleteBaseItem = (id) => {
+    const linked = data.ejecucion.find((it) => it.id === id);
+    const untouched = linked && (Number(linked.cantidad) || 0) === 0 && (Number(linked.valorUnitario) || 0) === 0;
+    onChange({
+      ...data,
+      base: data.base.filter((it) => it.id !== id),
+      ejecucion: untouched ? data.ejecucion.filter((it) => it.id !== id) : data.ejecucion,
+    });
+  };
+
+  // Ítems de "ejecución": los que vienen de base ya existen; aquí solo se agregan los adicionales
+  // no contemplados en la base.
+  const addEjecItem = (fields) => onChange({ ...data, ejecucion: [...data.ejecucion, { id: uid(), ...fields }] });
+  const addEjecItems = (newItems) => onChange({ ...data, ejecucion: [...data.ejecucion, ...newItems] });
+  const updateEjecItem = (id, patch) => onChange({ ...data, ejecucion: data.ejecucion.map((it) => (it.id === id ? { ...it, ...patch } : it)) });
+  const deleteEjecItem = (id) => onChange({ ...data, ejecucion: data.ejecucion.filter((it) => it.id !== id) });
+
+  const baseIds = new Set(data.base.map((it) => it.id));
 
   return (
     <div>
@@ -1411,21 +1444,23 @@ function PresupuestoModule({ data, onChange }) {
       </div>
 
       {chartData.length > 0 && (
-        <div style={styles.chartBox}>
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
-              <XAxis dataKey="name" tick={{ fill: "#7A8A93", fontSize: 10 }} />
-              <YAxis tick={{ fill: "#7A8A93", fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
-              <Tooltip
-                contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }}
-                formatter={(v) => fmtMoney(v)}
-              />
-              <RLegend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="Base" fill="#4FA8D8" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="Ejecución" fill="#F5B942" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+        <div style={{ ...styles.chartBox, overflowX: "auto" }}>
+          <div style={{ width: chartWidth }}>
+            <ResponsiveContainer width="100%" height={340}>
+              <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 70 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
+                <XAxis dataKey="name" tick={{ fill: "#7A8A93", fontSize: 10 }} angle={-40} textAnchor="end" interval={0} height={80} />
+                <YAxis tick={{ fill: "#7A8A93", fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
+                <Tooltip
+                  contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }}
+                  formatter={(v) => fmtMoney(v)}
+                />
+                <RLegend wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="Base" fill="#4FA8D8" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Ejecución" fill="#F5B942" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
 
@@ -1444,12 +1479,23 @@ function PresupuestoModule({ data, onChange }) {
         </button>
       </div>
 
-      <PresupuestoTable items={currentItems} onChange={setCurrentItems} />
+      {activeSub === "ejecucion" && (
+        <p style={styles.exportHint}>
+          Los ítems marcados con <span style={{ color: "#4FA8D8" }}>●</span> ya existen en el presupuesto base
+          (se crearon ahí). Los demás son adicionales, agregados directamente aquí.
+        </p>
+      )}
+
+      {activeSub === "base" ? (
+        <PresupuestoTable items={data.base} onAdd={addBaseItem} onAddMany={addBaseItems} onUpdate={updateBaseItem} onDelete={deleteBaseItem} />
+      ) : (
+        <PresupuestoTable items={data.ejecucion} onAdd={addEjecItem} onAddMany={addEjecItems} onUpdate={updateEjecItem} onDelete={deleteEjecItem} linkedIds={baseIds} />
+      )}
     </div>
   );
 }
 
-function PresupuestoTable({ items, onChange }) {
+function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds }) {
   const [newItem, setNewItem] = useState({
     item: "", categoria: "", descripcion: "", cantidad: "", unidad: "",
     valorUnitario: "", ivaPct: "",
@@ -1458,14 +1504,9 @@ function PresupuestoTable({ items, onChange }) {
 
   const grouped = groupPresupuestoItems(items);
 
-  const updateItem = (id, patch) => {
-    onChange(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
-  };
-  const deleteItem = (id) => onChange(items.filter((it) => it.id !== id));
   const addItem = () => {
     if (!newItem.descripcion.trim()) return;
-    const item = {
-      id: uid(),
+    onAdd({
       item: newItem.item.trim(),
       categoria: newItem.categoria.trim() || "Sin categoría",
       descripcion: newItem.descripcion.trim(),
@@ -1473,8 +1514,7 @@ function PresupuestoTable({ items, onChange }) {
       unidad: newItem.unidad.trim(),
       valorUnitario: Number(newItem.valorUnitario) || 0,
       ivaPct: Number(newItem.ivaPct) || 0,
-    };
-    onChange([...items, item]);
+    });
     setNewItem({ item: "", categoria: "", descripcion: "", cantidad: "", unidad: "", valorUnitario: "", ivaPct: "" });
   };
 
@@ -1489,7 +1529,7 @@ function PresupuestoTable({ items, onChange }) {
         <PastePresupuestoModal
           onClose={() => setShowPaste(false)}
           onImport={(newItems) => {
-            onChange([...items, ...newItems]);
+            onAddMany(newItems);
             setShowPaste(false);
           }}
         />
@@ -1522,31 +1562,35 @@ function PresupuestoTable({ items, onChange }) {
                 </tr>
                 {group.items.map((it) => {
                   const calc = calcPresupuestoItem(it);
+                  const isLinked = linkedIds && linkedIds.has(it.id);
                   return (
                     <tr key={it.id}>
                       <td style={styles.ovTd}>
-                        <input style={{ ...styles.miniInput, width: 56 }} value={it.item} onChange={(e) => updateItem(it.id, { item: e.target.value })} />
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          {isLinked && <span title="Viene del presupuesto base" style={{ color: "#4FA8D8" }}>●</span>}
+                          <input style={{ ...styles.miniInput, width: 56 }} value={it.item} onChange={(e) => onUpdate(it.id, { item: e.target.value })} />
+                        </div>
                       </td>
                       <td style={styles.ovTd}>
-                        <input style={styles.miniInput} value={it.descripcion} onChange={(e) => updateItem(it.id, { descripcion: e.target.value })} />
+                        <input style={styles.miniInput} value={it.descripcion} onChange={(e) => onUpdate(it.id, { descripcion: e.target.value })} />
                       </td>
                       <td style={styles.ovTd}>
-                        <input type="number" style={{ ...styles.miniInput, width: 64 }} value={it.cantidad} onChange={(e) => updateItem(it.id, { cantidad: e.target.value })} />
+                        <input type="number" style={{ ...styles.miniInput, width: 64 }} value={it.cantidad} onChange={(e) => onUpdate(it.id, { cantidad: e.target.value })} />
                       </td>
                       <td style={styles.ovTd}>
-                        <input style={{ ...styles.miniInput, width: 64 }} value={it.unidad} onChange={(e) => updateItem(it.id, { unidad: e.target.value })} />
+                        <input style={{ ...styles.miniInput, width: 64 }} value={it.unidad} onChange={(e) => onUpdate(it.id, { unidad: e.target.value })} />
                       </td>
                       <td style={styles.ovTd}>
-                        <input type="number" style={styles.miniInput} value={it.valorUnitario} onChange={(e) => updateItem(it.id, { valorUnitario: e.target.value })} />
+                        <input type="number" style={styles.miniInput} value={it.valorUnitario} onChange={(e) => onUpdate(it.id, { valorUnitario: e.target.value })} />
                       </td>
                       <td style={styles.ovTd}>
-                        <input type="number" style={{ ...styles.miniInput, width: 56 }} value={it.ivaPct} onChange={(e) => updateItem(it.id, { ivaPct: e.target.value })} />
+                        <input type="number" style={{ ...styles.miniInput, width: 56 }} value={it.ivaPct} onChange={(e) => onUpdate(it.id, { ivaPct: e.target.value })} />
                       </td>
                       <td style={styles.ovTd}>{fmtMoney(calc.valorUnitarioConIva)}</td>
                       <td style={{ ...styles.ovTd, fontWeight: 600 }}>{fmtMoney(calc.valorTotal)}</td>
                       <td style={styles.ovTd}>{fmtMoney(calc.ivaRecuperable)}</td>
                       <td style={styles.ovTd}>
-                        <button style={styles.rowDeleteBtn} onClick={() => deleteItem(it.id)}><Trash2 size={13} /></button>
+                        <button style={styles.rowDeleteBtn} onClick={() => onDelete(it.id)}><Trash2 size={13} /></button>
                       </td>
                     </tr>
                   );
@@ -1587,6 +1631,7 @@ function PresupuestoTable({ items, onChange }) {
     </div>
   );
 }
+
 
 
 function PagosModule({ data, onChange }) {
@@ -2041,105 +2086,192 @@ function EmptyState({ onAdd }) {
 /* ---------------------------------------------------------------------
    Printable report (used for "Exportar PDF" via window.print)
 --------------------------------------------------------------------- */
-const pr = {
+const prCard = {
   page: { display: "none" },
-  wrap: { background: "#fff", color: "#1A1A1A", fontFamily: "Arial, Helvetica, sans-serif", padding: "24px 30px", fontSize: 12 },
-  h1: { fontSize: 20, margin: "0 0 2px", fontWeight: 700 },
-  meta: { fontSize: 11, color: "#555", marginBottom: 4 },
-  genAt: { fontSize: 10, color: "#888", marginBottom: 18 },
-  h2: { fontSize: 15, fontWeight: 700, margin: "22px 0 4px", borderBottom: "2px solid #1A1A1A", paddingBottom: 4 },
-  bigStat: { fontSize: 13, fontWeight: 700, margin: "4px 0 14px" },
-  phaseBox: { border: "1px solid #ccc", borderRadius: 6, padding: "10px 14px", marginBottom: 10, breakInside: "avoid" },
-  phaseHead: { display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 12.5, marginBottom: 4 },
-  phaseMeta: { fontSize: 10.5, color: "#555", marginBottom: 6 },
-  checkRow: { fontSize: 11, padding: "2px 0" },
-  groupBox: { marginBottom: 14, breakInside: "avoid" },
-  groupHead: { display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 12, background: "#f0f0f0", padding: "5px 10px", borderRadius: 4 },
-  table: { width: "100%", borderCollapse: "collapse", fontSize: 10.5, marginTop: 4 },
-  th: { textAlign: "left", padding: "3px 8px", borderBottom: "1px solid #ccc", color: "#555", fontWeight: 600 },
-  td: { padding: "3px 8px", borderBottom: "1px solid #eee" },
+  wrap: { background: "#F7F8F9", color: "#1A1A1A", fontFamily: "Arial, Helvetica, sans-serif", padding: "26px 30px" },
+  headerRow: { marginBottom: 20 },
+  h1: { fontSize: 22, margin: "0 0 2px", fontWeight: 700, color: "#111" },
+  meta: { fontSize: 12, color: "#555", marginBottom: 2 },
+  genAt: { fontSize: 10.5, color: "#999" },
+  grid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 },
+  statGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 },
+  card: { background: "#fff", border: "1px solid #E2E5E8", borderRadius: 10, padding: "16px 18px", breakInside: "avoid" },
+  cardHead: { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 700, color: "#333", marginBottom: 10 },
+  bigPctRow: { display: "flex", alignItems: "center", gap: 10 },
+  bigPctTrack: { flex: 1, height: 7, background: "#E9ECEF", borderRadius: 6, overflow: "hidden" },
+  bigPctFill: { height: "100%", borderRadius: 6 },
+  bigPctNum: { fontSize: 17, fontWeight: 700, minWidth: 44, textAlign: "right" },
+  cardSub: { fontSize: 11, color: "#666", marginTop: 8 },
+  statCard: { background: "#fff", border: "1px solid #E2E5E8", borderRadius: 10, padding: "12px 14px", textAlign: "center" },
+  statNum: { fontSize: 19, fontWeight: 700, color: "#111" },
+  statLabel: { fontSize: 10, color: "#777", marginTop: 3 },
+  alertsCard: { background: "#fff", border: "1px solid #E2E5E8", borderRadius: 10, padding: "16px 18px", marginTop: 4, breakInside: "avoid" },
+  alertItem: { fontSize: 11.5, color: "#8A5A00", marginBottom: 5 },
+  table: { width: "100%", borderCollapse: "collapse", fontSize: 11, marginTop: 6 },
+  th: { textAlign: "left", padding: "6px 10px", borderBottom: "2px solid #ddd", color: "#555", fontWeight: 700, fontSize: 10 },
+  td: { padding: "6px 10px", borderBottom: "1px solid #eee" },
+  tdBarTrack: { display: "inline-block", width: 70, height: 6, background: "#E9ECEF", borderRadius: 4, overflow: "hidden", verticalAlign: "middle", marginRight: 6 },
+  tdBarFill: { display: "block", height: "100%", borderRadius: 4 },
 };
 
-function PrintReport({ project, data }) {
+function PrCardHead({ color, children }) {
+  return (
+    <div style={prCard.cardHead}>
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block" }} />
+      {children}
+    </div>
+  );
+}
+
+function PrBigPct({ pct, color }) {
+  return (
+    <div style={prCard.bigPctRow}>
+      <div style={prCard.bigPctTrack}><div style={{ ...prCard.bigPctFill, width: `${pct}%`, background: color }} /></div>
+      <span style={{ ...prCard.bigPctNum, color }}>{pct}%</span>
+    </div>
+  );
+}
+
+// Vista de impresión que reproduce el mismo diseño de tarjetas del Resumen en pantalla,
+// adaptado a fondo claro para imprimir (en vez de un reporte tipo documento).
+function PrintResumenProject({ project, data }) {
   const upmePct = upmeProgress(data.upme);
   const enerPct = energizacionProgress(data.energizacion);
+  const nextMs = nextEnergizacionMilestone(data.energizacion);
+  const elapsed = daysBetween(data.energizacion.fechaInicio, todayISO());
+  const presTotals = presupuestoTotals(data.presupuesto);
+  const pagTotals = pagosTotals(data.pagos);
+  const nextUpme = upmeNextStep(data.upme);
+  const alerts = buildProjectAlerts(data);
   const now = new Date();
 
   return (
-    <div className="print-only" style={pr.page}>
-      <div style={pr.wrap}>
-        <h1 style={pr.h1}>{project.name}</h1>
-        <div style={pr.meta}>
-          {project.capacity ? `${project.capacity} MWp` : ""}{project.location ? `  ·  ${project.location}` : ""}
+    <div className="print-only" style={prCard.page}>
+      <div style={prCard.wrap}>
+        <div style={prCard.headerRow}>
+          <h1 style={prCard.h1}>{project.name}</h1>
+          <div style={prCard.meta}>{project.capacity ? `${project.capacity} MWp` : ""}{project.location ? `  ·  ${project.location}` : ""}</div>
+          <div style={prCard.genAt}>Generado el {fmtDateTime(now)}</div>
         </div>
-        <div style={pr.genAt}>Reporte generado el {fmtDateTime(now)}</div>
 
-        <div style={pr.h2}>Radicación UPME — {upmePct}% completado</div>
-        {UPME_PHASES.map((p) => {
-          const ph = data.upme.phases[p.id];
-          const statusLabel = {
-            no_iniciado: "No iniciado", radicado: "Radicado", incompleto: "Subsanación",
-            aprobado: "Aprobado", rechazado: "Rechazado",
-          }[ph.status];
-          const vigenciaHasta = ph.fechaRespuesta ? addYears(ph.fechaRespuesta, p.vigenciaAnios) : null;
-          return (
-            <div key={p.id} style={pr.phaseBox}>
-              <div style={pr.phaseHead}>
-                <span>{p.label}</span>
-                <span>{statusLabel}</span>
-              </div>
-              <div style={pr.phaseMeta}>
-                Radicación: {fmtDate(ph.fechaRadicacion)} · Respuesta UPME: {fmtDate(ph.fechaRespuesta)}
-                {vigenciaHasta ? ` · Vigente hasta: ${fmtDate(vigenciaHasta)}` : ""}
-              </div>
-              {p.checklist.map((item, i) => (
-                <div key={i} style={pr.checkRow}>{ph.checklist[i] ? "☑" : "☐"} {item}</div>
-              ))}
-              {ph.notas && <div style={{ ...pr.phaseMeta, marginTop: 6 }}>Notas: {ph.notas}</div>}
+        <div style={prCard.grid}>
+          <div style={prCard.card}>
+            <PrCardHead color="#4FA8D8">Beneficios tributarios UPME</PrCardHead>
+            <PrBigPct pct={upmePct} color="#2C7DB8" />
+            <div style={prCard.cardSub}>{nextUpme ? `Siguiente paso: ${nextUpme.num}. ${nextUpme.label}` : "Proceso completado"}</div>
+          </div>
+          <div style={prCard.card}>
+            <PrCardHead color="#F5B942">Energización</PrCardHead>
+            <PrBigPct pct={enerPct} color="#C98A1E" />
+            <div style={prCard.cardSub}>Día {elapsed} de 200 · {nextMs ? `Siguiente: ${nextMs.title} (día ${nextMs.day})` : "Completado"}</div>
+          </div>
+          <div style={prCard.card}>
+            <PrCardHead color="#7FD08A">Presupuesto</PrCardHead>
+            <PrBigPct pct={presTotals.pct} color={presTotals.pct > 100 ? "#C0392B" : "#3E9B4F"} />
+            <div style={prCard.cardSub}>
+              Base {fmtMoney(presTotals.base)} · Ejecución {fmtMoney(presTotals.ejecutado)}
+              {presTotals.diferencia !== 0 && <> · {presTotals.diferencia > 0 ? "+" : ""}{fmtMoney(presTotals.diferencia)}</>}
             </div>
-          );
-        })}
+          </div>
+          <div style={prCard.card}>
+            <PrCardHead color="#E77DA8">Pagos</PrCardHead>
+            <PrBigPct pct={pagTotals.totalOrdenes ? Math.round((pagTotals.totalPagado / pagTotals.totalOrdenes) * 100) : 0} color="#C24E7C" />
+            <div style={prCard.cardSub}>{fmtMoney(pagTotals.totalPagado)} pagado de {fmtMoney(pagTotals.totalOrdenes)} · saldo {fmtMoney(pagTotals.totalSaldo)}</div>
+          </div>
+        </div>
 
-        <div style={pr.h2}>Energización — {enerPct}% completado (ponderado por costo)</div>
-        {ENERGIZACION_GROUPS.map((g, gi) => {
-          const start = ENERGIZACION_GROUPS.slice(0, gi).reduce((s, gg) => s + gg.items.length, 0);
-          const groupCost = g.items.reduce((s, it) => s + it.cost, 0);
-          const doneCost = g.items.reduce((s, it, j) => s + (data.energizacion.milestones[start + j]?.done ? it.cost : 0), 0);
-          const groupPct = groupCost ? Math.round((doneCost / groupCost) * 100) : 100;
-          return (
-            <div key={g.id} style={pr.groupBox}>
-              <div style={pr.groupHead}>
-                <span>{g.label}</span>
-                <span>{groupPct}% · peso {groupCost}</span>
-              </div>
-              <table style={pr.table}>
-                <thead>
-                  <tr>
-                    <th style={pr.th}>Estado</th>
-                    <th style={pr.th}>Actividad</th>
-                    <th style={pr.th}>Día</th>
-                    <th style={pr.th}>Peso</th>
-                    <th style={pr.th}>Fecha</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {g.items.map((it, j) => {
-                    const state = data.energizacion.milestones[start + j];
-                    return (
-                      <tr key={j}>
-                        <td style={pr.td}>{state?.done ? "☑" : "☐"}</td>
-                        <td style={pr.td}>{it.title}</td>
-                        <td style={pr.td}>{it.day}</td>
-                        <td style={pr.td}>{it.cost}</td>
-                        <td style={pr.td}>{state?.done ? fmtDate(state.fecha) : "—"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          );
-        })}
+        <div style={prCard.alertsCard}>
+          <PrCardHead color="#E8A33D">Alertas</PrCardHead>
+          {alerts.length === 0 ? (
+            <div style={prCard.cardSub}>Sin alertas por ahora.</div>
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {alerts.map((a, i) => <li key={i} style={prCard.alertItem}>{a}</li>)}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Igual que arriba, pero para el Resumen general (todos los proyectos a la vez).
+function PrintResumenGeneral({ projects, projectData }) {
+  const now = new Date();
+  const rows = projects.map((p) => {
+    const d = projectData[p.id];
+    if (!d) return { project: p, loading: true };
+    return {
+      project: p, loading: false,
+      upmePct: upmeProgress(d.upme),
+      enerPct: energizacionProgress(d.energizacion),
+      pres: presupuestoTotals(d.presupuesto),
+      pag: pagosTotals(d.pagos),
+    };
+  });
+  const loaded = rows.filter((r) => !r.loading);
+  const avgUpme = loaded.length ? Math.round(loaded.reduce((s, r) => s + r.upmePct, 0) / loaded.length) : 0;
+  const avgEner = loaded.length ? Math.round(loaded.reduce((s, r) => s + r.enerPct, 0) / loaded.length) : 0;
+  const totalBase = loaded.reduce((s, r) => s + r.pres.base, 0);
+  const totalEjecutado = loaded.reduce((s, r) => s + r.pres.ejecutado, 0);
+  const totalSaldo = loaded.reduce((s, r) => s + r.pag.totalSaldo, 0);
+
+  return (
+    <div className="print-only" style={prCard.page}>
+      <div style={prCard.wrap}>
+        <div style={prCard.headerRow}>
+          <h1 style={prCard.h1}>Resumen general</h1>
+          <div style={prCard.meta}>{projects.length} proyecto{projects.length === 1 ? "" : "s"}</div>
+          <div style={prCard.genAt}>Generado el {fmtDateTime(now)}</div>
+        </div>
+
+        <div style={prCard.statGrid}>
+          <div style={prCard.statCard}><div style={prCard.statNum}>{projects.length}</div><div style={prCard.statLabel}>Proyectos</div></div>
+          <div style={prCard.statCard}><div style={{ ...prCard.statNum, color: "#2C7DB8" }}>{avgUpme}%</div><div style={prCard.statLabel}>Avance UPME promedio</div></div>
+          <div style={prCard.statCard}><div style={{ ...prCard.statNum, color: "#C98A1E" }}>{avgEner}%</div><div style={prCard.statLabel}>Avance energización promedio</div></div>
+          <div style={prCard.statCard}><div style={{ ...prCard.statNum, color: totalSaldo > 0 ? "#C98A1E" : "#3E9B4F" }}>{fmtMoney(totalSaldo)}</div><div style={prCard.statLabel}>Saldo pendiente total</div></div>
+        </div>
+        <div style={{ ...prCard.cardSub, marginBottom: 14 }}>
+          Presupuesto base: {fmtMoney(totalBase)} · Presupuesto ejecución: {fmtMoney(totalEjecutado)}
+        </div>
+
+        <table style={prCard.table}>
+          <thead>
+            <tr>
+              <th style={prCard.th}>Proyecto</th>
+              <th style={prCard.th}>UPME</th>
+              <th style={prCard.th}>Energización</th>
+              <th style={prCard.th}>Presupuesto</th>
+              <th style={prCard.th}>Saldo pendiente</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ project: p, loading, upmePct, enerPct, pres, pag }) => (
+              <tr key={p.id}>
+                <td style={prCard.td}>
+                  <strong>{p.name}</strong>
+                  <div style={{ fontSize: 10, color: "#888" }}>{p.capacity ? `${p.capacity} MWp` : ""}{p.location ? ` · ${p.location}` : ""}</div>
+                </td>
+                {loading ? (
+                  <td colSpan={4} style={prCard.td}>Cargando…</td>
+                ) : (
+                  <>
+                    <td style={prCard.td}>
+                      <span style={prCard.tdBarTrack}><span style={{ ...prCard.tdBarFill, width: `${upmePct}%`, background: "#4FA8D8" }} /></span>{upmePct}%
+                    </td>
+                    <td style={prCard.td}>
+                      <span style={prCard.tdBarTrack}><span style={{ ...prCard.tdBarFill, width: `${enerPct}%`, background: "#F5B942" }} /></span>{enerPct}%
+                    </td>
+                    <td style={prCard.td}>
+                      <span style={prCard.tdBarTrack}><span style={{ ...prCard.tdBarFill, width: `${Math.min(100, pres.pct)}%`, background: pres.pct > 100 ? "#C0392B" : "#7FD08A" }} /></span>{pres.pct}%
+                    </td>
+                    <td style={prCard.td}>{fmtMoney(pag.totalSaldo)}</td>
+                  </>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -2396,7 +2528,10 @@ const styles = {
   },
 
   // Overview / Resumen general screen
-  overviewHeader: { padding: "22px 32px 14px", borderBottom: "1px solid #1E282E" },
+  overviewHeader: {
+    padding: "22px 32px 14px", borderBottom: "1px solid #1E282E",
+    display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12,
+  },
   overviewStatRow: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 22 },
   overviewStat: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, padding: "16px 18px" },
   overviewStatNum: { fontFamily: FONT_MONO, fontSize: 26, fontWeight: 700, color: "#E8EDEF" },
@@ -2469,5 +2604,23 @@ const styles = {
   pastePreview: {
     fontSize: 12.5, color: "#B9C4CA", lineHeight: 1.5, background: "#1C242A", border: "1px solid #2A3339",
     borderRadius: 8, padding: "10px 12px", marginBottom: 12,
+  },
+
+  // UPME step timeline
+  upmeStepList: { display: "flex", flexDirection: "column", gap: 10 },
+  upmeStepCard: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, padding: "14px 16px" },
+  upmeStepCardSkipped: { opacity: 0.55 },
+  upmeStepHead: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  upmeStepNum: {
+    width: 30, height: 30, borderRadius: "50%", border: "1.5px solid", display: "flex",
+    alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, fontFamily: FONT_MONO, flexShrink: 0,
+  },
+  upmeStepLabel: { fontSize: 13.5, color: "#E8EDEF", fontWeight: 500 },
+  upmeSkippedTag: { fontSize: 10.5, color: "#5A6870", marginTop: 2 },
+  upmeCheckToggle: { display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "#7A8A93", cursor: "pointer" },
+  upmeStepBody: { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginTop: 12, paddingLeft: 42 },
+  upmeDecisionBox: {
+    display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#B9C4CA",
+    background: "#1C242A", border: "1px solid #2A3339", borderRadius: 8, padding: "8px 12px",
   },
 };

@@ -4,52 +4,29 @@
  * ahora reutilizable en un proyecto Vite normal.
  */
 
-const UPME_PHASES = [
+const UPME_STEPS = [
+  { id: "s1", num: 1, label: "Proyecto creado en la UPME" },
+  { id: "s2", num: 2, label: "Consecución de fichas técnicas y certificados" },
+  { id: "s3", num: 3, label: "Diligenciamiento de información en la plataforma" },
+  { id: "s4", num: 4, label: "Pago de tarifa" },
+  { id: "s5", num: 5, label: "Radicado" },
   {
-    id: "prefactibilidad",
-    label: "Fase 1 · Prefactibilidad",
-    vigenciaAnios: 2,
-    plazoRespuestaDias: 15,
-    checklist: [
-      "Diligenciar Formato No. 1 (información general del proyecto)",
-      "Mapa de localización del proyecto",
-      "Verificación de superposición con otros proyectos del sector",
-      "Pago de tarifa UPME (si aplica)",
-      "Radicación en Ventanilla Única",
-      "Respuesta UPME: completa / incompleta / rechazada",
-      "Subsanación de información (si aplica, 10 días hábiles)",
-      "Certificado de registro Fase 1 expedido",
-    ],
+    id: "s6",
+    num: 6,
+    label: "Revisión por parte de la UPME",
+    decision: { question: "¿Cumplió con la primera revisión de la UPME?", ifSiSkipTo: "s9", ifNoGoTo: "s7" },
   },
+  { id: "s7", num: 7, label: "Comentarios emitidos por la UPME (primera versión)", skipIf: (u) => u.steps.s6?.decision === "si" },
+  { id: "s8", num: 8, label: "Subsanación de comentarios emitidos", skipIf: (u) => u.steps.s6?.decision === "si" },
   {
-    id: "factibilidad",
-    label: "Fase 2 · Factibilidad",
-    vigenciaAnios: 2,
-    plazoRespuestaDias: 15,
-    checklist: [
-      "Estudios técnicos de factibilidad",
-      "Estudio de conexión / disponibilidad de espacio físico",
-      "Acuerdo Operacional de Coexistencia (si hay superposición)",
-      "Información financiera del proyecto",
-      "Radicación de actualización de fase",
-      "Respuesta UPME: completa / incompleta / rechazada",
-      "Certificado de registro Fase 2 expedido",
-    ],
+    id: "s9",
+    num: 9,
+    label: "Verificación de documentación inicial e inicio de revisión del componente técnico",
+    decision: { question: "¿Hay comentarios para subsanar?", ifNoSkipTo: "s12", ifSiGoTo: "s10" },
   },
-  {
-    id: "ingenieria",
-    label: "Fase 3 · Ingeniería de detalle",
-    vigenciaAnios: 1,
-    plazoRespuestaDias: 15,
-    checklist: [
-      "Diseño definitivo del proyecto",
-      "Documentos de ejecución",
-      "Actualización de información técnica",
-      "Radicación de actualización de fase",
-      "Respuesta UPME: completa / incompleta / rechazada",
-      "Certificado de registro Fase 3 expedido",
-    ],
-  },
+  { id: "s10", num: 10, label: "Emisión de comentarios por parte de la UPME", skipIf: (u) => u.steps.s9?.decision === "no" },
+  { id: "s11", num: 11, label: "Subsanación de comentarios", skipIf: (u) => u.steps.s9?.decision === "no" },
+  { id: "s12", num: 12, label: "Emisión de certificado" },
 ];
 
 /* ---------------------------------------------------------------------
@@ -199,17 +176,11 @@ const fmtDateTime = (date) =>
     : "";
 
 function emptyUpmeState() {
-  const phases = {};
-  UPME_PHASES.forEach((p) => {
-    phases[p.id] = {
-      status: "no_iniciado", // no_iniciado | radicado | incompleto | aprobado | rechazado
-      fechaRadicacion: "",
-      fechaRespuesta: "",
-      checklist: p.checklist.map(() => false),
-      notas: "",
-    };
+  const steps = {};
+  UPME_STEPS.forEach((s) => {
+    steps[s.id] = { completado: false, fecha: "", decision: null, notas: "" };
   });
-  return { phases };
+  return { steps };
 }
 
 function emptyEnergizacionState() {
@@ -271,7 +242,7 @@ function ensureFullProjectData(data) {
       : emptyCronogramaState();
 
   const rawUpme = data?.upme;
-  const upme = rawUpme && rawUpme.phases ? rawUpme : emptyUpmeState();
+  const upme = rawUpme && rawUpme.steps ? rawUpme : emptyUpmeState();
 
   const rawEner = data?.energizacion;
   const energizacion = rawEner && Array.isArray(rawEner.milestones) ? rawEner : emptyEnergizacionState();
@@ -545,18 +516,17 @@ function buildReportHTML(project, data) {
   const enerPct = energizacionProgress(data.energizacion);
   const now = new Date();
 
-  const upmeHTML = UPME_PHASES.map((p) => {
-    const ph = data.upme.phases[p.id];
-    const vigenciaHasta = ph.fechaRespuesta ? addYears(ph.fechaRespuesta, p.vigenciaAnios) : null;
-    const items = p.checklist
-      .map((item, i) => `<div class="check-row">${ph.checklist[i] ? "☑" : "☐"} ${escapeHTML(item)}</div>`)
-      .join("");
+  const upmeHTML = upmeActiveSteps(data.upme).map((s) => {
+    const st = data.upme.steps[s.id];
+    const decisionHTML = s.decision
+      ? `<div class="phase-meta">${escapeHTML(s.decision.question)}: <strong>${st.decision ? (st.decision === "si" ? "Sí" : "No") : "Sin definir"}</strong></div>`
+      : "";
     return `
       <div class="phase-box">
-        <div class="phase-head"><span>${escapeHTML(p.label)}</span><span>${STATUS_LABELS[ph.status]}</span></div>
-        <div class="phase-meta">Radicación: ${fmtDate(ph.fechaRadicacion)} · Respuesta UPME: ${fmtDate(ph.fechaRespuesta)}${vigenciaHasta ? ` · Vigente hasta: ${fmtDate(vigenciaHasta)}` : ""}</div>
-        ${items}
-        ${ph.notas ? `<div class="phase-meta" style="margin-top:6px">Notas: ${escapeHTML(ph.notas)}</div>` : ""}
+        <div class="phase-head"><span>${s.num}. ${escapeHTML(s.label)}</span><span>${st.completado ? "Completado" : "Pendiente"}</span></div>
+        <div class="phase-meta">Fecha: ${fmtDate(st.fecha)}</div>
+        ${decisionHTML}
+        ${st.notas ? `<div class="phase-meta" style="margin-top:6px">Notas: ${escapeHTML(st.notas)}</div>` : ""}
       </div>`;
   }).join("");
 
@@ -630,10 +600,19 @@ function escapeHTML(str) {
   return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// Devuelve solo los pasos que aplican según las decisiones tomadas en los pasos 6 y 9
+// (excluye 7-8 si la primera revisión se cumplió, y 10-11 si no hubo comentarios para subsanar)
+function upmeActiveSteps(upme) {
+  return UPME_STEPS.filter((s) => !(s.skipIf && s.skipIf(upme)));
+}
 function upmeProgress(upme) {
-  const total = UPME_PHASES.reduce((s, p) => s + p.checklist.length, 0);
-  const done = UPME_PHASES.reduce((s, p) => s + upme.phases[p.id].checklist.filter(Boolean).length, 0);
-  return total ? Math.round((done / total) * 100) : 0;
+  const active = upmeActiveSteps(upme);
+  const done = active.filter((s) => upme.steps[s.id]?.completado).length;
+  return active.length ? Math.round((done / active.length) * 100) : 0;
+}
+function upmeNextStep(upme) {
+  const active = upmeActiveSteps(upme);
+  return active.find((s) => !upme.steps[s.id]?.completado) || null;
 }
 function energizacionProgress(ener) {
   let doneCost = 0;
@@ -655,7 +634,7 @@ function nextEnergizacionMilestone(ener) {
 }
 
 export {
-  UPME_PHASES,
+  UPME_STEPS,
   ENERGIZACION_GROUPS,
   ENERGIZACION_MILESTONES,
   ENERGIZACION_TOTAL_COST,
@@ -684,6 +663,8 @@ export {
   buildReportHTML,
   escapeHTML,
   upmeProgress,
+  upmeActiveSteps,
+  upmeNextStep,
   energizacionProgress,
   nextEnergizacionMilestone,
   presupuestoTotals,
