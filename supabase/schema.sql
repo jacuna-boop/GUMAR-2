@@ -22,9 +22,15 @@ create table if not exists project_data (
   upme jsonb not null default '{}'::jsonb,
   energizacion jsonb not null default '{}'::jsonb,
   cronograma jsonb not null default '{}'::jsonb,
+  presupuesto jsonb not null default '{}'::jsonb,
+  pagos jsonb not null default '{}'::jsonb,
   updated_at timestamptz default now(),
   updated_by uuid references auth.users(id)
 );
+
+-- Si esta tabla ya existía de una instalación anterior, agrega las columnas nuevas sin borrar nada:
+alter table project_data add column if not exists presupuesto jsonb not null default '{}'::jsonb;
+alter table project_data add column if not exists pagos jsonb not null default '{}'::jsonb;
 
 -- Perfil simple para mostrar nombre de quien hizo cada cambio (opcional)
 create table if not exists profiles (
