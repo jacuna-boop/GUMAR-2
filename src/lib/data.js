@@ -288,8 +288,18 @@ function groupPresupuestoItems(items) {
   return order.map((cat) => ({ categoria: cat, items: map[cat] }));
 }
 
+// Un pago cuenta como realizado si su estado es "pagado" (o no tiene estado, para compatibilidad
+// con registros creados antes de esta función). Los "programados" son pagos futuros planeados
+// que todavía no se cuentan como dinero efectivamente pagado.
 function ordenPagado(orden) {
-  return (orden.pagos || []).reduce((s, p) => s + (Number(p.valor) || 0), 0);
+  return (orden.pagos || [])
+    .filter((p) => (p.estado || "pagado") === "pagado")
+    .reduce((s, p) => s + (Number(p.valor) || 0), 0);
+}
+function ordenProgramado(orden) {
+  return (orden.pagos || [])
+    .filter((p) => p.estado === "programado")
+    .reduce((s, p) => s + (Number(p.valor) || 0), 0);
 }
 function ordenSaldo(orden) {
   return (Number(orden.valorTotal) || 0) - ordenPagado(orden);
@@ -298,8 +308,29 @@ function pagosTotals(pagos) {
   const ordenes = pagos?.ordenes || [];
   const totalOrdenes = ordenes.reduce((s, o) => s + (Number(o.valorTotal) || 0), 0);
   const totalPagado = ordenes.reduce((s, o) => s + ordenPagado(o), 0);
+  const totalProgramado = ordenes.reduce((s, o) => s + ordenProgramado(o), 0);
   const totalSaldo = totalOrdenes - totalPagado;
-  return { totalOrdenes, totalPagado, totalSaldo };
+  return { totalOrdenes, totalPagado, totalProgramado, totalSaldo };
+}
+
+// Alertas de pagos programados: próximos a vencer (dentro de `diasAviso` días) o ya vencidos.
+function pagosProximosAlertas(pagos, diasAviso = 7) {
+  const hoy = todayISO();
+  const alertas = [];
+  (pagos?.ordenes || []).forEach((o) => {
+    (o.pagos || []).forEach((p) => {
+      if (p.estado !== "programado" || !p.fecha) return;
+      const dias = daysBetween(hoy, p.fecha);
+      const concepto = p.concepto ? ` (${p.concepto})` : "";
+      if (dias < 0) {
+        alertas.push({ tipo: "vencido", texto: `Pago programado vencido: ${o.numero}${concepto} — ${fmtMoney(p.valor)}, previsto para el ${fmtDate(p.fecha)}.` });
+      } else if (dias <= diasAviso) {
+        const cuando = dias === 0 ? "hoy" : `en ${dias} día${dias === 1 ? "" : "s"}`;
+        alertas.push({ tipo: "proximo", texto: `Pago próximo: ${o.numero}${concepto} — ${fmtMoney(p.valor)}, vence ${cuando} (${fmtDate(p.fecha)}).` });
+      }
+    });
+  });
+  return alertas;
 }
 
 function fmtMoney(n) {
@@ -673,7 +704,9 @@ export {
   calcPresupuestoItem,
   parsePresupuestoPaste,
   ordenPagado,
+  ordenProgramado,
   ordenSaldo,
   pagosTotals,
+  pagosProximosAlertas,
   fmtMoney,
 };

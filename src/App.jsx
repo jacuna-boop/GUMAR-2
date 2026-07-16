@@ -16,7 +16,7 @@ import {
   parseCronogramaPaste, cronogramaAvanceActual,
   upmeProgress, upmeActiveSteps, upmeNextStep, energizacionProgress, nextEnergizacionMilestone,
   presupuestoTotals, presupuestoListTotal, groupPresupuestoItems, calcPresupuestoItem, parsePresupuestoPaste,
-  ordenPagado, ordenSaldo, pagosTotals, fmtMoney,
+  ordenPagado, ordenProgramado, ordenSaldo, pagosTotals, pagosProximosAlertas, fmtMoney,
 } from "./lib/data.js";
 
 /* ---------------------------------------------------------------------
@@ -660,6 +660,7 @@ function buildProjectAlerts(data) {
   if (pagTotals.totalSaldo > 0) {
     alerts.push(`Pagos: hay ${fmtMoney(pagTotals.totalSaldo)} en saldo pendiente por pagar.`);
   }
+  pagosProximosAlertas(data.pagos).forEach((a) => alerts.push(a.texto));
   return alerts;
 }
 
@@ -1419,6 +1420,12 @@ function PresupuestoModule({ data, onChange }) {
   const deleteEjecItem = (id) => onChange({ ...data, ejecucion: data.ejecucion.filter((it) => it.id !== id) });
 
   const baseIds = new Set(data.base.map((it) => it.id));
+  const baseValoresPorItem = new Map(data.base.map((it) => [it.id, calcPresupuestoItem(it).valorTotal]));
+  const baseValoresPorCategoria = new Map();
+  data.base.forEach((it) => {
+    const cat = it.categoria?.trim() || "Sin categoría";
+    baseValoresPorCategoria.set(cat, (baseValoresPorCategoria.get(cat) || 0) + calcPresupuestoItem(it).valorTotal);
+  });
 
   return (
     <div>
@@ -1489,13 +1496,22 @@ function PresupuestoModule({ data, onChange }) {
       {activeSub === "base" ? (
         <PresupuestoTable items={data.base} onAdd={addBaseItem} onAddMany={addBaseItems} onUpdate={updateBaseItem} onDelete={deleteBaseItem} />
       ) : (
-        <PresupuestoTable items={data.ejecucion} onAdd={addEjecItem} onAddMany={addEjecItems} onUpdate={updateEjecItem} onDelete={deleteEjecItem} linkedIds={baseIds} />
+        <PresupuestoTable
+          items={data.ejecucion}
+          onAdd={addEjecItem}
+          onAddMany={addEjecItems}
+          onUpdate={updateEjecItem}
+          onDelete={deleteEjecItem}
+          linkedIds={baseIds}
+          baseValoresPorItem={baseValoresPorItem}
+          baseValoresPorCategoria={baseValoresPorCategoria}
+        />
       )}
     </div>
   );
 }
 
-function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds }) {
+function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds, baseValoresPorItem, baseValoresPorCategoria }) {
   const [newItem, setNewItem] = useState({
     item: "", categoria: "", descripcion: "", cantidad: "", unidad: "",
     valorUnitario: "", ivaPct: "",
@@ -1553,18 +1569,27 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
         <tbody>
           {grouped.map((group) => {
             const groupTotal = presupuestoListTotal(group.items);
+            const baseGroupTotal = baseValoresPorCategoria?.get(group.categoria);
+            const groupExcedido = baseGroupTotal !== undefined && groupTotal > baseGroupTotal;
             return (
               <React.Fragment key={group.categoria}>
                 <tr>
-                  <td colSpan={7} style={styles.presGroupRow}>{group.categoria}</td>
-                  <td style={styles.presGroupRow}>{fmtMoney(groupTotal)}</td>
+                  <td colSpan={7} style={styles.presGroupRow}>
+                    {group.categoria}
+                    {groupExcedido && <span style={styles.presExcedidoTag}> · supera la base ({fmtMoney(groupTotal - baseGroupTotal)})</span>}
+                  </td>
+                  <td style={{ ...styles.presGroupRow, color: groupExcedido ? "#E2604F" : undefined, fontWeight: groupExcedido ? 800 : undefined }}>
+                    {fmtMoney(groupTotal)}
+                  </td>
                   <td style={styles.presGroupRow} colSpan={2}></td>
                 </tr>
                 {group.items.map((it) => {
                   const calc = calcPresupuestoItem(it);
                   const isLinked = linkedIds && linkedIds.has(it.id);
+                  const baseValor = baseValoresPorItem?.get(it.id);
+                  const itemExcedido = isLinked && baseValor !== undefined && calc.valorTotal > baseValor;
                   return (
-                    <tr key={it.id}>
+                    <tr key={it.id} style={itemExcedido ? { background: "#2A1418" } : undefined}>
                       <td style={styles.ovTd}>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           {isLinked && <span title="Viene del presupuesto base" style={{ color: "#4FA8D8" }}>●</span>}
@@ -1587,7 +1612,10 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                         <input type="number" style={{ ...styles.miniInput, width: 56 }} value={it.ivaPct} onChange={(e) => onUpdate(it.id, { ivaPct: e.target.value })} />
                       </td>
                       <td style={styles.ovTd}>{fmtMoney(calc.valorUnitarioConIva)}</td>
-                      <td style={{ ...styles.ovTd, fontWeight: 600 }}>{fmtMoney(calc.valorTotal)}</td>
+                      <td style={{ ...styles.ovTd, fontWeight: 700, color: itemExcedido ? "#E2604F" : undefined }}>
+                        {fmtMoney(calc.valorTotal)}
+                        {itemExcedido && <div style={styles.presExcedidoTag}>+{fmtMoney(calc.valorTotal - baseValor)} vs. base</div>}
+                      </td>
                       <td style={styles.ovTd}>{fmtMoney(calc.ivaRecuperable)}</td>
                       <td style={styles.ovTd}>
                         <button style={styles.rowDeleteBtn} onClick={() => onDelete(it.id)}><Trash2 size={13} /></button>
@@ -1637,8 +1665,9 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
 function PagosModule({ data, onChange }) {
   const [newOrden, setNewOrden] = useState({ numero: "", proveedor: "", descripcion: "", valorTotal: "" });
   const [openId, setOpenId] = useState(null);
-  const [newPago, setNewPago] = useState({ fecha: todayISO(), valor: "", concepto: "" });
+  const [newPago, setNewPago] = useState({ fecha: todayISO(), valor: "", concepto: "", estado: "pagado" });
   const totals = pagosTotals(data);
+  const alertas = pagosProximosAlertas(data);
 
   const addOrden = () => {
     if (!newOrden.numero.trim() || newOrden.valorTotal === "") return;
@@ -1661,12 +1690,12 @@ function PagosModule({ data, onChange }) {
 
   const addPago = (ordenId) => {
     if (!newPago.fecha || newPago.valor === "") return;
-    const pago = { id: uid(), fecha: newPago.fecha, valor: Number(newPago.valor) || 0, concepto: newPago.concepto.trim() };
+    const pago = { id: uid(), fecha: newPago.fecha, valor: Number(newPago.valor) || 0, concepto: newPago.concepto.trim(), estado: newPago.estado };
     onChange({
       ...data,
       ordenes: data.ordenes.map((o) => (o.id === ordenId ? { ...o, pagos: [...o.pagos, pago] } : o)),
     });
-    setNewPago({ fecha: todayISO(), valor: "", concepto: "" });
+    setNewPago({ fecha: todayISO(), valor: "", concepto: "", estado: "pagado" });
   };
   const deletePago = (ordenId, pagoId) => {
     onChange({
@@ -1695,14 +1724,25 @@ function PagosModule({ data, onChange }) {
           <div style={styles.overviewStatLabel}>Total pagado</div>
         </div>
         <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}>{fmtMoney(totals.totalSaldo)}</div>
-          <div style={styles.overviewStatLabel}>Saldo pendiente</div>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#7CA8D8" }}>{fmtMoney(totals.totalProgramado)}</div>
+          <div style={styles.overviewStatLabel}>Total programado (pendiente)</div>
         </div>
         <div style={styles.overviewStat}>
-          <div style={styles.overviewStatNum}>{data.ordenes.length}</div>
-          <div style={styles.overviewStatLabel}>Órdenes de servicio</div>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.totalSaldo < 0 ? "#E2604F" : totals.totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}>{fmtMoney(totals.totalSaldo)}</div>
+          <div style={styles.overviewStatLabel}>Saldo pendiente</div>
         </div>
       </div>
+
+      {alertas.length > 0 && (
+        <div style={styles.pagosAlertBox}>
+          <div style={styles.cardHead}><AlertTriangle size={16} color="#E8A33D" /><span>Pagos programados</span></div>
+          <ul style={styles.alertList}>
+            {alertas.map((a, i) => (
+              <li key={i} style={{ ...styles.alertItem, color: a.tipo === "vencido" ? "#E2604F" : "#E8A33D" }}>{a.texto}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div style={styles.cronoTableWrap}>
         <table style={styles.overviewTable}>
@@ -1719,8 +1759,10 @@ function PagosModule({ data, onChange }) {
           <tbody>
             {data.ordenes.map((o) => {
               const pagado = ordenPagado(o);
+              const programado = ordenProgramado(o);
               const saldo = ordenSaldo(o);
-              const pct = o.valorTotal ? Math.min(100, Math.round((pagado / o.valorTotal) * 100)) : 0;
+              const sobrepasado = saldo < 0;
+              const pct = o.valorTotal ? Math.round((pagado / o.valorTotal) * 100) : 0;
               const isOpen = openId === o.id;
               return (
                 <React.Fragment key={o.id}>
@@ -1757,9 +1799,9 @@ function PagosModule({ data, onChange }) {
                       />
                     </td>
                     <td style={styles.ovTd}>
-                      <OvBar pct={pct} color={saldo <= 0 ? "#5FBF8F" : "#F5B942"} />
-                      <div style={{ fontSize: 10.5, color: "#7A8A93", marginTop: 3, fontFamily: "'JetBrains Mono', monospace" }}>
-                        {fmtMoney(pagado)} pagado · saldo {fmtMoney(saldo)}
+                      <OvBar pct={Math.min(100, pct)} color={sobrepasado ? "#E2604F" : saldo === 0 ? "#5FBF8F" : "#F5B942"} />
+                      <div style={{ fontSize: 10.5, color: sobrepasado ? "#E2604F" : "#7A8A93", marginTop: 3, fontFamily: "'JetBrains Mono', monospace", fontWeight: sobrepasado ? 700 : 400 }}>
+                        {fmtMoney(pagado)} pagado{programado > 0 ? ` · ${fmtMoney(programado)} programado` : ""} · {sobrepasado ? "excedido en " : "saldo "}{fmtMoney(Math.abs(saldo))}
                       </div>
                     </td>
                     <td style={styles.ovTd}>
@@ -1775,45 +1817,65 @@ function PagosModule({ data, onChange }) {
                           <table style={styles.overviewTable}>
                             <thead>
                               <tr>
-                                <th style={styles.ovTh}>Fecha de pago</th>
+                                <th style={styles.ovTh}>Estado</th>
+                                <th style={styles.ovTh}>Fecha</th>
                                 <th style={styles.ovTh}>Valor</th>
                                 <th style={styles.ovTh}>Concepto</th>
                                 <th style={styles.ovTh}></th>
                               </tr>
                             </thead>
                             <tbody>
-                              {o.pagos.map((p) => (
-                                <tr key={p.id}>
-                                  <td style={styles.ovTd}>
-                                    <input
-                                      type="date"
-                                      style={styles.miniInput}
-                                      value={p.fecha}
-                                      onChange={(e) => updatePago(o.id, p.id, { fecha: e.target.value })}
-                                    />
-                                  </td>
-                                  <td style={styles.ovTd}>
-                                    <input
-                                      type="number"
-                                      style={styles.miniInput}
-                                      value={p.valor}
-                                      onChange={(e) => updatePago(o.id, p.id, { valor: Number(e.target.value) || 0 })}
-                                    />
-                                  </td>
-                                  <td style={styles.ovTd}>
-                                    <input
-                                      style={styles.miniInput}
-                                      placeholder="Concepto"
-                                      value={p.concepto || ""}
-                                      onChange={(e) => updatePago(o.id, p.id, { concepto: e.target.value })}
-                                    />
-                                  </td>
-                                  <td style={styles.ovTd}>
-                                    <button style={styles.rowDeleteBtn} onClick={() => deletePago(o.id, p.id)}><Trash2 size={13} /></button>
-                                  </td>
-                                </tr>
-                              ))}
+                              {o.pagos.map((p) => {
+                                const estado = p.estado || "pagado";
+                                return (
+                                  <tr key={p.id}>
+                                    <td style={styles.ovTd}>
+                                      <select
+                                        style={styles.miniInput}
+                                        value={estado}
+                                        onChange={(e) => updatePago(o.id, p.id, { estado: e.target.value })}
+                                      >
+                                        <option value="pagado">Pagado</option>
+                                        <option value="programado">Programado</option>
+                                      </select>
+                                    </td>
+                                    <td style={styles.ovTd}>
+                                      <input
+                                        type="date"
+                                        style={styles.miniInput}
+                                        value={p.fecha}
+                                        onChange={(e) => updatePago(o.id, p.id, { fecha: e.target.value })}
+                                      />
+                                    </td>
+                                    <td style={styles.ovTd}>
+                                      <input
+                                        type="number"
+                                        style={styles.miniInput}
+                                        value={p.valor}
+                                        onChange={(e) => updatePago(o.id, p.id, { valor: Number(e.target.value) || 0 })}
+                                      />
+                                    </td>
+                                    <td style={styles.ovTd}>
+                                      <input
+                                        style={styles.miniInput}
+                                        placeholder="Concepto"
+                                        value={p.concepto || ""}
+                                        onChange={(e) => updatePago(o.id, p.id, { concepto: e.target.value })}
+                                      />
+                                    </td>
+                                    <td style={styles.ovTd}>
+                                      <button style={styles.rowDeleteBtn} onClick={() => deletePago(o.id, p.id)}><Trash2 size={13} /></button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                               <tr>
+                                <td style={styles.ovTd}>
+                                  <select style={styles.miniInput} value={newPago.estado} onChange={(e) => setNewPago({ ...newPago, estado: e.target.value })}>
+                                    <option value="pagado">Pagado</option>
+                                    <option value="programado">Programado</option>
+                                  </select>
+                                </td>
                                 <td style={styles.ovTd}>
                                   <input type="date" style={styles.miniInput} value={newPago.fecha} onChange={(e) => setNewPago({ ...newPago, fecha: e.target.value })} />
                                 </td>
@@ -2595,6 +2657,7 @@ const styles = {
     padding: "8px 16px", fontSize: 11.5, fontWeight: 700, color: "#F5B942", background: "#1C242A",
     borderBottom: "1px solid #232D33", textTransform: "uppercase", letterSpacing: 0.3,
   },
+  presExcedidoTag: { color: "#E2604F", fontSize: 10, fontWeight: 700, textTransform: "none", letterSpacing: 0 },
   pasteBtnRow: { display: "flex", justifyContent: "flex-end", marginBottom: 10 },
   pasteBtn: {
     display: "flex", alignItems: "center", gap: 6, background: "#1C242A", border: "1px solid #2A3339",
@@ -2622,5 +2685,8 @@ const styles = {
   upmeDecisionBox: {
     display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#B9C4CA",
     background: "#1C242A", border: "1px solid #2A3339", borderRadius: 8, padding: "8px 12px",
+  },
+  pagosAlertBox: {
+    background: "#171E23", border: "1px solid #E8A33D55", borderRadius: 12, padding: "14px 18px", marginBottom: 18,
   },
 };
