@@ -6,16 +6,19 @@ import {
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { supabase } from "./lib/supabaseClient";
+import { COLOMBIA_LOCATIONS } from "./lib/colombiaLocations";
 import Login from "./components/Login";
 import {
   UPME_STEPS, ENERGIZACION_GROUPS, ENERGIZACION_MILESTONES, ENERGIZACION_TOTAL_COST,
   CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, fmtDate, fmtTime, fmtDateTime,
   emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyPresupuestoState, emptyPagosState,
-  emptyProjectData, ensureFullProjectData,
+  emptyProjectData, ensureFullProjectData, buildPresupuestoBaseFromTemplate, buildCronogramaBaseFromTemplate,
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData,
-  parseCronogramaPaste, cronogramaAvanceActual,
+  parseCronogramaPaste, cronogramaAvanceActual, matchCronogramaTasks, applyCronogramaMerge,
+  parsePredecesoras, computeCronogramaSchedule,
   upmeProgress, upmeActiveSteps, upmeNextStep, energizacionProgress, nextEnergizacionMilestone,
   presupuestoTotals, presupuestoListTotal, groupPresupuestoItems, calcPresupuestoItem, parsePresupuestoPaste,
+  parseColombianNumber,
   ordenPagado, ordenProgramado, ordenSaldo, pagosTotals, pagosProximosAlertas, fmtMoney,
 } from "./lib/data.js";
 
@@ -60,7 +63,11 @@ function Dashboard({ session }) {
   const [editingProject, setEditingProject] = useState(null); // project object | null
   const [showImportText, setShowImportText] = useState(false);
   const [view, setView] = useState("overview"); // "overview" | "project"
-  const [printTarget, setPrintTarget] = useState(null); // null | "project" | "general"
+  const [printTarget, setPrintTarget] = useState(null); // null | "project" | "general" | "tab"
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [role, setRole] = useState("editor"); // "admin" | "editor" | "lector" — "editor" es el default seguro
+  const isAdmin = role === "admin";
+  const isLector = role === "lector";
 
   useEffect(() => {
     const onAfterPrint = () => setPrintTarget(null);
@@ -71,11 +78,17 @@ function Dashboard({ session }) {
 
   const rowToProject = (row) => ({ id: row.id, name: row.name, capacity: row.capacity, location: row.location, createdAt: row.created_at });
 
-  // Initial load: full project list
+  // Initial load: full project list + el rol de quien inició sesión (para permisos)
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase.from("projects").select("*").order("created_at", { ascending: true });
+      const [{ data, error }, roleResult] = await Promise.all([
+        supabase.from("projects").select("*").order("created_at", { ascending: true }),
+        supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
+      ]);
       if (!error && data) setProjects(data.map(rowToProject));
+      // Si la columna "role" todavía no existe (no se ha corrido la migración) o no hay perfil,
+      // se queda en "editor" por defecto — no rompe el acceso de nadie.
+      if (!roleResult.error && roleResult.data?.role) setRole(roleResult.data.role);
       setLoading(false);
     })();
   }, []);
@@ -227,7 +240,13 @@ function Dashboard({ session }) {
     if (error || !data) { setSaveError(true); return; }
     const newProject = rowToProject(data);
     setProjects((prev) => [...prev, newProject]);
-    const fresh = emptyProjectData();
+    // El presupuesto y el cronograma arrancan con las plantillas base en vez de vacíos, para no
+    // tener que digitar todo desde cero en cada proyecto nuevo.
+    const fresh = {
+      ...emptyProjectData(),
+      presupuesto: buildPresupuestoBaseFromTemplate(),
+      cronograma: buildCronogramaBaseFromTemplate(),
+    };
     await supabase.from("project_data").insert({
       project_id: newProject.id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, updated_by: user.id,
     });
@@ -344,6 +363,8 @@ function Dashboard({ session }) {
           onImportText={() => setShowImportText(true)}
           userEmail={user.email}
           onSignOut={() => supabase.auth.signOut()}
+          isAdmin={isAdmin}
+          isLector={isLector}
         />
         <main className="app-main" style={styles.main}>
           {projects.length === 0 ? (
@@ -364,7 +385,11 @@ function Dashboard({ session }) {
                 </button>
               </div>
               <div style={styles.content}>
-                <ResumenGeneral projects={projects} projectData={projectData} onOpenProject={(id) => { setSelectedId(id); setView("project"); }} />
+                <ResumenGeneral
+                  projects={projects}
+                  projectData={projectData}
+                  onOpenProject={(id, targetTab) => { setSelectedId(id); setView("project"); setTab(targetTab || "resumen"); }}
+                />
               </div>
             </>
           ) : !selected ? (
@@ -378,13 +403,18 @@ function Dashboard({ session }) {
                 saveStatus={saveStatus}
                 lastSaved={lastSaved}
                 onSaveNow={saveNow}
-                onExportPDF={() => { setPrintTarget("project"); setTimeout(() => window.print(), 50); }}
+                onExportPDF={() => setShowExportModal(true)}
               />
-              <div style={styles.content}>
+              {isLector && (
+                <div style={styles.readonlyBanner}>
+                  <Circle size={12} /> Modo solo lectura — puedes ver y exportar, pero no editar.
+                </div>
+              )}
+              <div style={styles.content} className={isLector ? "readonly-gate" : undefined}>
                 {!data ? (
                   <div style={{ color: "#8B9AA3", padding: 40 }}>Cargando proyecto…</div>
                 ) : tab === "resumen" ? (
-                  <Resumen data={data} />
+                  <Resumen data={data} setTab={setTab} />
                 ) : tab === "upme" ? (
                   <UpmeModule
                     data={data.upme}
@@ -418,6 +448,18 @@ function Dashboard({ session }) {
       </div>
       {printTarget === "project" && selected && data && <PrintResumenProject project={selected} data={data} />}
       {printTarget === "general" && <PrintResumenGeneral projects={projects} projectData={projectData} />}
+      {printTarget === "tab" && selected && data && <PrintCurrentTab project={selected} tab={tab} data={data} />}
+      {showExportModal && selected && (
+        <ExportPdfModal
+          tab={tab}
+          onClose={() => setShowExportModal(false)}
+          onChoose={(target) => {
+            setShowExportModal(false);
+            setPrintTarget(target);
+            setTimeout(() => window.print(), 50);
+          }}
+        />
+      )}
       {showAddProject && (
         <ProjectFormModal
           title="Nuevo proyecto"
@@ -462,7 +504,7 @@ function Dashboard({ session }) {
   );
 }
 
-function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, onEditProject, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut }) {
+function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, onEditProject, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut, isAdmin, isLector }) {
   const fileInputRef = React.useRef(null);
 
   return (
@@ -482,9 +524,11 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
         <LayoutGrid size={15} /> Resumen general
       </button>
 
-      <button style={styles.addProjectBtn} onClick={onAdd}>
-        <Plus size={15} /> Nuevo proyecto
-      </button>
+      {!isLector && (
+        <button style={styles.addProjectBtn} onClick={onAdd}>
+          <Plus size={15} /> Nuevo proyecto
+        </button>
+      )}
 
       <div style={styles.projectList}>
         {projects.length === 0 && (
@@ -506,24 +550,28 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
               <div style={styles.projectItemTop}>
                 <span style={styles.projectName}>{p.name}</span>
                 <div style={{ display: "flex", gap: 2 }}>
-                  <button
-                    style={styles.deleteBtn}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onEditProject(p);
-                    }}
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    style={styles.deleteBtn}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(p);
-                    }}
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                  {!isLector && (
+                    <button
+                      style={styles.deleteBtn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEditProject(p);
+                      }}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      style={styles.deleteBtn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(p);
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  )}
                 </div>
               </div>
               <div style={styles.projectMeta}>
@@ -544,13 +592,17 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
           <button style={styles.footerBtn} onClick={onExport}>
             Exportar datos
           </button>
-          <button style={styles.footerBtn} onClick={() => fileInputRef.current?.click()}>
-            Importar archivo
-          </button>
+          {!isLector && (
+            <button style={styles.footerBtn} onClick={() => fileInputRef.current?.click()}>
+              Importar archivo
+            </button>
+          )}
         </div>
-        <button style={styles.footerBtnFull} onClick={onImportText}>
-          Importar pegando texto
-        </button>
+        {!isLector && (
+          <button style={styles.footerBtnFull} onClick={onImportText}>
+            Importar pegando texto
+          </button>
+        )}
         <button style={styles.footerBtnFull} onClick={onSignOut}>
           Cerrar sesión
         </button>
@@ -582,6 +634,64 @@ function MiniBar({ label, pct, color }) {
   );
 }
 
+// Formatea un texto de dígitos (con a lo sumo una coma decimal) con puntos de miles, estilo
+// colombiano: "1234567" -> "1.234.567", "1234,5" -> "1.234,5".
+function formatMilesDisplay(raw) {
+  if (!raw) return "";
+  const [intPart, decPart] = raw.split(",");
+  const intFormatted = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return decPart !== undefined ? `${intFormatted},${decPart}` : intFormatted;
+}
+
+// Input numérico que va mostrando los puntos de miles/millones mientras se escribe, para poder ver
+// de un vistazo si el número quedó con la cantidad de ceros correcta. Por dentro sigue guardando un
+// número plano (onChange recibe un number) — el formato es solo visual.
+function MoneyInput({ value, onChange, style, placeholder }) {
+  const toText = (v) => (v === "" || v === undefined || v === null || Number(v) === 0 ? "" : formatMilesDisplay(String(v).replace(".", ",")));
+  const [text, setText] = useState(() => toText(value));
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (parseColombianNumber(text) !== (Number(value) || 0)) setText(toText(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const handleChange = (e) => {
+    const input = e.target;
+    const caret = input.selectionStart;
+    const digitsBeforeCaret = input.value.slice(0, caret).replace(/[^0-9,]/g, "").length;
+
+    let raw = input.value.replace(/[^0-9,]/g, "");
+    const firstComma = raw.indexOf(",");
+    if (firstComma !== -1) raw = raw.slice(0, firstComma + 1) + raw.slice(firstComma + 1).replace(/,/g, "");
+
+    const formatted = formatMilesDisplay(raw);
+    setText(formatted);
+    onChange(parseColombianNumber(raw));
+
+    requestAnimationFrame(() => {
+      if (!inputRef.current) return;
+      let count = 0, pos = 0;
+      for (; pos < formatted.length && count < digitsBeforeCaret; pos++) {
+        if (/[0-9,]/.test(formatted[pos])) count++;
+      }
+      inputRef.current.setSelectionRange(pos, pos);
+    });
+  };
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      inputMode="decimal"
+      style={style}
+      placeholder={placeholder}
+      value={text}
+      onChange={handleChange}
+    />
+  );
+}
+
 /* ---------------------------------------------------------------------
    Header + tabs
 --------------------------------------------------------------------- */
@@ -608,7 +718,7 @@ function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExpo
           <button
             style={styles.pdfBtn}
             onClick={onExportPDF}
-            title="Descarga un reporte HTML — ábrelo y usa Ctrl+P / Cmd+P para guardarlo como PDF"
+            title="Elige qué exportar y guárdalo como PDF desde el diálogo de impresión"
           >
             <FileDown size={14} /> Exportar PDF
           </button>
@@ -664,7 +774,7 @@ function buildProjectAlerts(data) {
   return alerts;
 }
 
-function Resumen({ data }) {
+function Resumen({ data, setTab }) {
   const upmePct = upmeProgress(data.upme);
   const enerPct = energizacionProgress(data.energizacion);
   const nextMs = nextEnergizacionMilestone(data.energizacion);
@@ -676,7 +786,11 @@ function Resumen({ data }) {
 
   return (
     <div style={styles.resumenGrid}>
-      <div style={styles.card}>
+      <div
+        style={{ ...styles.card, ...styles.cardClickable }}
+        role="button"
+        onClick={() => setTab?.("upme")}
+      >
         <div style={styles.cardHead}>
           <FileCheck size={16} color="#4FA8D8" />
           <span>Beneficios tributarios UPME</span>
@@ -685,7 +799,11 @@ function Resumen({ data }) {
         <div style={styles.cardSub}>{nextUpme ? `Siguiente paso: ${nextUpme.num}. ${nextUpme.label}` : "Proceso completado"}</div>
       </div>
 
-      <div style={styles.card}>
+      <div
+        style={{ ...styles.card, ...styles.cardClickable }}
+        role="button"
+        onClick={() => setTab?.("energizacion")}
+      >
         <div style={styles.cardHead}>
           <Zap size={16} color="#F5B942" />
           <span>Energización</span>
@@ -696,7 +814,11 @@ function Resumen({ data }) {
         </div>
       </div>
 
-      <div style={styles.card}>
+      <div
+        style={{ ...styles.card, ...styles.cardClickable }}
+        role="button"
+        onClick={() => setTab?.("presupuesto")}
+      >
         <div style={styles.cardHead}>
           <DollarSign size={16} color="#7FD08A" />
           <span>Presupuesto</span>
@@ -710,7 +832,11 @@ function Resumen({ data }) {
         </div>
       </div>
 
-      <div style={styles.card}>
+      <div
+        style={{ ...styles.card, ...styles.cardClickable }}
+        role="button"
+        onClick={() => setTab?.("pagos")}
+      >
         <div style={styles.cardHead}>
           <Wallet size={16} color="#E77DA8" />
           <span>Pagos</span>
@@ -755,7 +881,8 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
     const delayed = nextMs && nextMs.delayed;
     const pres = presupuestoTotals(d.presupuesto);
     const pag = pagosTotals(d.pagos);
-    return { project: p, loading: false, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag };
+    const alerts = buildProjectAlerts(d);
+    return { project: p, loading: false, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag, alerts };
   });
 
   const loaded = rows.filter((r) => !r.loading);
@@ -765,6 +892,7 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
   const totalBase = loaded.reduce((s, r) => s + r.pres.base, 0);
   const totalEjecutado = loaded.reduce((s, r) => s + r.pres.ejecutado, 0);
   const totalSaldo = loaded.reduce((s, r) => s + r.pag.totalSaldo, 0);
+  const projectsWithAlerts = loaded.filter((r) => r.alerts.length > 0);
 
   return (
     <div>
@@ -802,6 +930,35 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
         </div>
       </div>
 
+      <div style={{ ...styles.card, marginBottom: 22 }}>
+        <div style={styles.cardHead}>
+          <AlertTriangle size={16} color="#E8A33D" />
+          <span>Alertas por proyecto</span>
+        </div>
+        {projectsWithAlerts.length === 0 ? (
+          <div style={styles.cardSub}>Sin alertas por ahora.</div>
+        ) : (
+          <div style={styles.alertsByProjectList}>
+            {projectsWithAlerts.map(({ project: p, alerts }) => (
+              <div key={p.id} style={styles.alertsByProjectGroup}>
+                <div
+                  style={styles.alertsByProjectName}
+                  role="button"
+                  onClick={() => onOpenProject(p.id, "resumen")}
+                >
+                  {p.name}
+                </div>
+                <ul style={styles.alertList}>
+                  {alerts.map((a, i) => (
+                    <li key={i} style={styles.alertItem}>{a}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div style={styles.overviewTableWrap}>
         <table style={styles.overviewTable}>
           <thead>
@@ -817,7 +974,7 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
           </thead>
           <tbody>
             {rows.map(({ project: p, loading, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag }) => (
-              <tr key={p.id} style={styles.ovRow} onClick={() => onOpenProject(p.id)}>
+              <tr key={p.id} style={styles.ovRow} onClick={() => onOpenProject(p.id, "resumen")}>
                 <td style={styles.ovTdName}>
                   <div style={{ fontWeight: 600 }}>{p.name}</div>
                   <div style={styles.ovTdMeta}>{p.capacity ? `${p.capacity} MWp` : ""}{p.location ? ` · ${p.location}` : ""}</div>
@@ -826,12 +983,35 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
                   <td colSpan={6} style={styles.ovTd}>Cargando…</td>
                 ) : (
                   <>
-                    <td style={styles.ovTd}><OvBar pct={upmePct} color="#4FA8D8" /></td>
-                    <td style={styles.ovTd}><OvBar pct={enerPct} color="#F5B942" /></td>
-                    <td style={styles.ovTd}><OvBar pct={pres.pct} color={pres.pct > 100 ? "#E2604F" : "#7FD08A"} /></td>
-                    <td style={{ ...styles.ovTd, color: pag.totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}>{fmtMoney(pag.totalSaldo)}</td>
+                    <td
+                      style={styles.ovTd}
+                      onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "upme"); }}
+                    >
+                      <OvBar pct={upmePct} color="#4FA8D8" />
+                    </td>
+                    <td
+                      style={styles.ovTd}
+                      onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "energizacion"); }}
+                    >
+                      <OvBar pct={enerPct} color="#F5B942" />
+                    </td>
+                    <td
+                      style={styles.ovTd}
+                      onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "presupuesto"); }}
+                    >
+                      <OvBar pct={pres.pct} color={pres.pct > 100 ? "#E2604F" : "#7FD08A"} />
+                    </td>
+                    <td
+                      style={{ ...styles.ovTd, color: pag.totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}
+                      onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "pagos"); }}
+                    >
+                      {fmtMoney(pag.totalSaldo)}
+                    </td>
                     <td style={styles.ovTd}>{elapsed} / 200</td>
-                    <td style={{ ...styles.ovTd, color: delayed ? "#E2604F" : "#B9C4CA" }}>
+                    <td
+                      style={{ ...styles.ovTd, color: delayed ? "#E2604F" : "#B9C4CA" }}
+                      onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "energizacion"); }}
+                    >
                       {nextMs ? `${nextMs.title} (día ${nextMs.day})${delayed ? " · atrasado" : ""}` : "Completado"}
                     </td>
                   </>
@@ -896,16 +1076,21 @@ function UpmeModule({ data, onChange }) {
           return (
             <div key={s.id} style={{ ...styles.upmeStepCard, ...(skipped ? styles.upmeStepCardSkipped : {}) }}>
               <div style={styles.upmeStepHead}>
-                <div
+                <button
+                  disabled={skipped}
+                  aria-label={skipped ? undefined : st.completado ? "Marcar como pendiente" : "Marcar como completado"}
+                  onClick={skipped ? undefined : () => updateStep(s.id, { completado: !st.completado })}
                   style={{
                     ...styles.upmeStepNum,
                     background: skipped ? "#232D33" : st.completado ? "#5FBF8F" : "#1C242A",
                     color: skipped ? "#5A6870" : st.completado ? "#0F1417" : "#E8EDEF",
                     borderColor: skipped ? "#2A3339" : st.completado ? "#5FBF8F" : "#4FA8D8",
+                    cursor: skipped ? "default" : "pointer",
+                    padding: 0,
                   }}
                 >
                   {st.completado && !skipped ? <Check size={14} /> : s.num}
-                </div>
+                </button>
                 <div style={{ flex: 1 }}>
                   <div style={{ ...styles.upmeStepLabel, ...(skipped ? { color: "#5A6870", textDecoration: "line-through" } : {}) }}>
                     {s.label}
@@ -1073,33 +1258,48 @@ function EnergizacionModule({ data, onChange }) {
 }
 
 function CronogramaModule({ data, onChange }) {
-  const [newTask, setNewTask] = useState({ nombre: "", fechaInicio: "", fechaFin: "", peso: "" });
+  const [newTask, setNewTask] = useState({ nombre: "", fechaInicio: "", fechaFin: "", peso: "", predecesoras: "" });
   const [newSeg, setNewSeg] = useState({ fecha: todayISO(), avance: "" });
   const [showPaste, setShowPaste] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null); // { kind: "task" | "seg", id, label } | null
 
   const pesoTotal = cronogramaPesoTotal(data.tasks);
   const curvaData = buildCurvaSData(data);
   const lastReal = [...data.seguimiento].filter((s) => s.fecha).sort((a, b) => a.fecha.localeCompare(b.fecha)).pop();
   const avanceHoy = cronogramaAvanceActual(data.tasks);
 
+  // Registra (o actualiza) el punto de seguimiento de HOY automáticamente, para que llevar el
+  // seguimiento sea solo cuestión de editar el %completado de cada actividad.
+  const upsertAvanceHoy = (tasksNext) => {
+    const hoy = todayISO();
+    const avance = cronogramaAvanceActual(tasksNext);
+    const existing = data.seguimiento.find((s) => s.fecha === hoy);
+    return existing
+      ? data.seguimiento.map((s) => (s.fecha === hoy ? { ...s, avance } : s))
+      : [...data.seguimiento, { id: uid(), fecha: hoy, avance }];
+  };
+
+  // Referencias de "Id" que sí existen hoy en la tabla — para saber qué predecesoras resuelven a
+  // otra tarea (y por lo tanto calculan su fecha solas) vs. cuáles quedan sin resolver.
+  const knownDisplayIds = new Set(data.tasks.map((t) => (t.displayId || "").trim()).filter(Boolean));
+  const isComputed = (t) => !t.esGrupo && parsePredecesoras(t.predecesoras).some((p) => knownDisplayIds.has(p.id));
+
   const addTask = () => {
     if (!newTask.nombre.trim() || !newTask.fechaInicio || !newTask.fechaFin || newTask.peso === "") return;
-    const task = { id: uid(), nombre: newTask.nombre.trim(), fechaInicio: newTask.fechaInicio, fechaFin: newTask.fechaFin, peso: Number(newTask.peso), esGrupo: false };
-    onChange({ ...data, tasks: [...data.tasks, task] });
-    setNewTask({ nombre: "", fechaInicio: "", fechaFin: "", peso: "" });
+    const task = {
+      id: uid(), nombre: newTask.nombre.trim(), fechaInicio: newTask.fechaInicio, fechaFin: newTask.fechaFin,
+      predecesoras: newTask.predecesoras.trim(), peso: Number(newTask.peso), esGrupo: false, pctCompletado: 0,
+    };
+    onChange({ ...data, tasks: computeCronogramaSchedule([...data.tasks, task]) });
+    setNewTask({ nombre: "", fechaInicio: "", fechaFin: "", peso: "", predecesoras: "" });
   };
-  const updateTask = (id, patch) => onChange({ ...data, tasks: data.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
-  const deleteTask = (id) => onChange({ ...data, tasks: data.tasks.filter((t) => t.id !== id) });
-
-  const registrarAvanceHoy = () => {
-    const hoy = todayISO();
-    const existing = data.seguimiento.find((s) => s.fecha === hoy);
-    if (existing) {
-      onChange({ ...data, seguimiento: data.seguimiento.map((s) => (s.fecha === hoy ? { ...s, avance: avanceHoy } : s)) });
-    } else {
-      onChange({ ...data, seguimiento: [...data.seguimiento, { id: uid(), fecha: hoy, avance: avanceHoy }] });
-    }
+  const updateTask = (id, patch) => {
+    const nextTasks = computeCronogramaSchedule(data.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+    const nextSeguimiento = "pctCompletado" in patch ? upsertAvanceHoy(nextTasks) : data.seguimiento;
+    onChange({ ...data, tasks: nextTasks, seguimiento: nextSeguimiento });
   };
+  const deleteTask = (id) => onChange({ ...data, tasks: computeCronogramaSchedule(data.tasks.filter((t) => t.id !== id)) });
+  const askDeleteTask = (t) => setConfirmDelete({ kind: "task", id: t.id, label: t.nombre || "esta tarea" });
 
   const addSeg = () => {
     if (!newSeg.fecha || newSeg.avance === "") return;
@@ -1109,6 +1309,14 @@ function CronogramaModule({ data, onChange }) {
   };
   const updateSeg = (id, patch) => onChange({ ...data, seguimiento: data.seguimiento.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
   const deleteSeg = (id) => onChange({ ...data, seguimiento: data.seguimiento.filter((s) => s.id !== id) });
+  const askDeleteSeg = (s) => setConfirmDelete({ kind: "seg", id: s.id, label: `el registro del ${fmtDate(s.fecha)}` });
+
+  const runConfirmedDelete = () => {
+    if (!confirmDelete) return;
+    if (confirmDelete.kind === "task") deleteTask(confirmDelete.id);
+    else if (confirmDelete.kind === "seg") deleteSeg(confirmDelete.id);
+    setConfirmDelete(null);
+  };
 
   return (
     <div>
@@ -1126,9 +1334,10 @@ function CronogramaModule({ data, onChange }) {
 
       {showPaste && (
         <PasteCronogramaModal
+          existingTasks={data.tasks}
           onClose={() => setShowPaste(false)}
-          onImport={(newTasks) => {
-            onChange({ ...data, tasks: [...data.tasks, ...newTasks] });
+          onImport={(mergedTasks) => {
+            onChange({ ...data, tasks: mergedTasks });
             setShowPaste(false);
           }}
         />
@@ -1167,13 +1376,26 @@ function CronogramaModule({ data, onChange }) {
                   <input style={{ ...styles.miniInput, width: 70 }} value={t.duracionTexto || ""} onChange={(e) => updateTask(t.id, { duracionTexto: e.target.value })} placeholder="0 días" />
                 </td>
                 <td style={styles.ovTd}>
-                  <input type="date" style={styles.miniInput} value={t.fechaInicio} onChange={(e) => updateTask(t.id, { fechaInicio: e.target.value })} />
+                  {isComputed(t) ? (
+                    <span style={styles.cronoComputedDate} title="Calculada a partir de la predecesora">{fmtDate(t.fechaInicio)}</span>
+                  ) : (
+                    <input type="date" style={styles.miniInput} value={t.fechaInicio} onChange={(e) => updateTask(t.id, { fechaInicio: e.target.value })} />
+                  )}
                 </td>
                 <td style={styles.ovTd}>
-                  <input type="date" style={styles.miniInput} value={t.fechaFin} onChange={(e) => updateTask(t.id, { fechaFin: e.target.value })} />
+                  {isComputed(t) ? (
+                    <span style={styles.cronoComputedDate} title="Calculada a partir de la predecesora">{fmtDate(t.fechaFin)}</span>
+                  ) : (
+                    <input type="date" style={styles.miniInput} value={t.fechaFin} onChange={(e) => updateTask(t.id, { fechaFin: e.target.value })} />
+                  )}
                 </td>
                 <td style={styles.ovTd}>
-                  <input style={{ ...styles.miniInput, width: 70 }} value={t.predecesoras || ""} onChange={(e) => updateTask(t.id, { predecesoras: e.target.value })} />
+                  <input
+                    style={{ ...styles.miniInput, width: 70 }}
+                    value={t.predecesoras || ""}
+                    placeholder="ej. 35CC+5 días"
+                    onChange={(e) => updateTask(t.id, { predecesoras: e.target.value })}
+                  />
                 </td>
                 <td style={styles.ovTd}>
                   <input type="number" style={{ ...styles.miniInput, width: 56 }} value={t.pctCompletado || 0} onChange={(e) => updateTask(t.id, { pctCompletado: e.target.value })} />
@@ -1185,7 +1407,7 @@ function CronogramaModule({ data, onChange }) {
                   <input type="checkbox" checked={!!t.esGrupo} onChange={(e) => updateTask(t.id, { esGrupo: e.target.checked })} />
                 </td>
                 <td style={styles.ovTd}>
-                  <button style={styles.rowDeleteBtn} onClick={() => deleteTask(t.id)}><Trash2 size={13} /></button>
+                  <button style={styles.rowDeleteBtn} onClick={() => askDeleteTask(t)}><Trash2 size={13} /></button>
                 </td>
               </tr>
             ))}
@@ -1201,7 +1423,14 @@ function CronogramaModule({ data, onChange }) {
               <td style={styles.ovTd}>
                 <input type="date" style={styles.miniInput} value={newTask.fechaFin} onChange={(e) => setNewTask({ ...newTask, fechaFin: e.target.value })} />
               </td>
-              <td style={styles.ovTd}></td>
+              <td style={styles.ovTd}>
+                <input
+                  style={{ ...styles.miniInput, width: 70 }}
+                  placeholder="ej. 35CC+5 días"
+                  value={newTask.predecesoras}
+                  onChange={(e) => setNewTask({ ...newTask, predecesoras: e.target.value })}
+                />
+              </td>
               <td style={styles.ovTd}></td>
               <td style={styles.ovTd}>
                 <input type="number" style={{ ...styles.miniInput, width: 60 }} placeholder="%" value={newTask.peso} onChange={(e) => setNewTask({ ...newTask, peso: e.target.value })} />
@@ -1218,11 +1447,13 @@ function CronogramaModule({ data, onChange }) {
       <div style={styles.cronoHead}>
         <h3 style={styles.h3}>Curva S de construcción</h3>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {lastReal && <span style={styles.pesoTotalTag}>último avance real: {lastReal.avance}% ({fmtDate(lastReal.fecha)})</span>}
-          <button style={styles.pasteBtn} onClick={registrarAvanceHoy}>
-            Registrar avance de hoy ({avanceHoy}%)
-          </button>
+          <span style={styles.pesoTotalTag}>
+            avance real hoy: {avanceHoy}%{lastReal && lastReal.fecha !== todayISO() ? ` · último registro: ${lastReal.avance}% (${fmtDate(lastReal.fecha)})` : ""}
+          </span>
         </div>
+      </div>
+      <div style={{ color: "#7A8A93", fontSize: 11.5, margin: "-6px 0 12px" }}>
+        El seguimiento se registra solo: cada vez que editas el %completado de una actividad, el punto de hoy se actualiza automáticamente.
       </div>
 
       {curvaData.length === 0 ? (
@@ -1264,7 +1495,7 @@ function CronogramaModule({ data, onChange }) {
                   <input type="number" style={{ ...styles.miniInput, width: 70 }} value={s.avance} onChange={(e) => updateSeg(s.id, { avance: e.target.value })} />
                 </td>
                 <td style={styles.ovTd}>
-                  <button style={styles.rowDeleteBtn} onClick={() => deleteSeg(s.id)}><Trash2 size={13} /></button>
+                  <button style={styles.rowDeleteBtn} onClick={() => askDeleteSeg(s)}><Trash2 size={13} /></button>
                 </td>
               </tr>
             ))}
@@ -1282,18 +1513,33 @@ function CronogramaModule({ data, onChange }) {
           </tbody>
         </table>
       </div>
+
+      {confirmDelete && (
+        <ConfirmModal
+          title={confirmDelete.kind === "task" ? "Eliminar tarea" : "Eliminar registro de seguimiento"}
+          message={`¿Eliminar ${confirmDelete.kind === "task" ? "la tarea" : ""} "${confirmDelete.label}"? Esta acción no se puede deshacer.`}
+          confirmLabel="Eliminar"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={runConfirmedDelete}
+        />
+      )}
     </div>
   );
 }
 
-function PasteCronogramaModal({ onClose, onImport }) {
+function PasteCronogramaModal({ existingTasks, onClose, onImport }) {
   const [text, setText] = useState("");
-  const [preview, setPreview] = useState(null); // { tasks, skipped, grupos } | null
+  const [preview, setPreview] = useState(null); // { skipped, grupos, toUpdate, toAdd } | null
 
   const process = () => {
     const { tasks, skipped } = parseCronogramaPaste(text);
     const grupos = tasks.filter((t) => t.esGrupo).length;
-    setPreview({ tasks, skipped, grupos });
+    const { toUpdate, toAdd } = matchCronogramaTasks(existingTasks, tasks);
+    setPreview({ skipped, grupos, total: tasks.length, toUpdate, toAdd });
+  };
+
+  const confirmImport = () => {
+    onImport(applyCronogramaMerge(existingTasks, preview.toUpdate, preview.toAdd));
   };
 
   return (
@@ -1307,8 +1553,9 @@ function PasteCronogramaModal({ onClose, onImport }) {
           En MS Project, selecciona las columnas <strong>Id, Nombre de tarea, Duración, Comienzo, Fin, Predecesoras
           y % completado</strong> (incluye la fila de encabezados) y cópialas (Ctrl/Cmd+C). Pega aquí abajo.
           Las filas de resumen/fase (con duración distinta de "0 días") se detectan automáticamente como categorías —
-          puedes corregirlo después con la casilla "Grupo" en la tabla. El peso de cada tarea se reparte igual entre
-          todas para que sume 100%; ajústalo si tienes mejor información de costos.
+          puedes corregirlo después con la casilla "Grupo" en la tabla. Si una tarea ya existe (mismo Id de Project,
+          o si no hay Id, mismo nombre) se actualiza en vez de duplicarse — conservando el peso y la casilla "Grupo"
+          que hayas ajustado a mano. El peso de las tareas nuevas empieza en 0; ajústalo tú.
         </p>
         <textarea
           value={text}
@@ -1323,18 +1570,32 @@ function PasteCronogramaModal({ onClose, onImport }) {
         ) : (
           <>
             <div style={styles.pastePreview}>
-              Se detectaron <strong>{preview.tasks.length}</strong> filas ({preview.grupos} de categoría/fase,{" "}
-              {preview.tasks.length - preview.grupos} tareas).
+              Se detectaron <strong>{preview.total}</strong> filas ({preview.grupos} de categoría/fase,{" "}
+              {preview.total - preview.grupos} tareas).
               {preview.skipped > 0 && <> Se ignoraron {preview.skipped} filas sin nombre.</>}
+              <div style={{ marginTop: 6 }}>
+                <strong style={{ color: "#4FA8D8" }}>{preview.toUpdate.length}</strong> ya existen y se van a actualizar ·{" "}
+                <strong style={{ color: "#5FBF8F" }}>{preview.toAdd.length}</strong> son nuevas.
+              </div>
+              {preview.toUpdate.length > 0 && (
+                <div style={{ marginTop: 8, fontSize: 11.5, color: "#7A8A93" }}>
+                  Se actualizarán: {preview.toUpdate.map(({ existing }) => existing.nombre).join(", ")}
+                </div>
+              )}
+              {preview.toAdd.length > 0 && (
+                <div style={{ marginTop: 4, fontSize: 11.5, color: "#7A8A93" }}>
+                  Nuevas: {preview.toAdd.map((t) => t.nombre).join(", ")}
+                </div>
+              )}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button style={styles.confirmCancelBtn} onClick={() => setPreview(null)}>Volver a pegar</button>
               <button
-                style={{ ...styles.addProjectBtn, opacity: preview.tasks.length ? 1 : 0.5 }}
-                disabled={!preview.tasks.length}
-                onClick={() => onImport(preview.tasks)}
+                style={{ ...styles.addProjectBtn, opacity: preview.total ? 1 : 0.5 }}
+                disabled={!preview.total}
+                onClick={confirmImport}
               >
-                Importar {preview.tasks.length} filas
+                Importar ({preview.toUpdate.length} actualizadas, {preview.toAdd.length} nuevas)
               </button>
             </div>
           </>
@@ -1347,28 +1608,54 @@ function PasteCronogramaModal({ onClose, onImport }) {
 
 function PresupuestoModule({ data, onChange }) {
   const [activeSub, setActiveSub] = useState("base"); // "base" | "ejecucion"
+  const [chartMode, setChartMode] = useState("categoria"); // "categoria" | "actividad"
   const totals = presupuestoTotals(data);
 
-  // Compara actividad por actividad (no por capítulo): empareja los ítems de base y ejecución
-  // por su id compartido; los adicionales de ejecución (sin contraparte en base) también se muestran.
+  // Por categoría: se ve completa en la página sin scroll (útil como vista general).
+  const chartDataByCategoria = (() => {
+    const map = new Map();
+    data.base.forEach((it) => {
+      const cat = it.categoria?.trim() || "Sin categoría";
+      const cur = map.get(cat) || { name: cat, Base: 0, Ejecución: 0 };
+      cur.Base += calcPresupuestoItem(it).valorTotal;
+      map.set(cat, cur);
+    });
+    data.ejecucion.forEach((it) => {
+      const cat = it.categoria?.trim() || "Sin categoría";
+      const cur = map.get(cat) || { name: cat, Base: 0, Ejecución: 0 };
+      cur.Ejecución += calcPresupuestoItem(it).valorTotal;
+      map.set(cat, cur);
+    });
+    return Array.from(map.values());
+  })();
+
+  // Por actividad: compara ítem por ítem, emparejando base y ejecución por su código de "Ítem"
+  // (columna compartida entre ambas listas, ej. "2.2"), no por el id interno — filas pegadas desde
+  // Excel a cada lista por separado generan ids aleatorios distintos aunque sean la misma actividad,
+  // así que emparejar por id las mostraba como actividades separadas. Con muchos ítems se ve ancha
+  // (scroll horizontal) — para una vista que quepa completa en la página usa "Por categoría".
   const itemLabel = (it) => (it.item ? `${it.item} · ${it.descripcion}` : it.descripcion) || "(sin nombre)";
+  const chartKey = (it) => (it.item && it.item.trim()) || it.id;
   const chartMap = new Map();
   data.base.forEach((it) => {
-    chartMap.set(it.id, { name: itemLabel(it), Base: calcPresupuestoItem(it).valorTotal, Ejecución: 0 });
+    chartMap.set(chartKey(it), { name: itemLabel(it), Base: calcPresupuestoItem(it).valorTotal, Ejecución: 0 });
   });
   data.ejecucion.forEach((it) => {
+    const key = chartKey(it);
     const valorTotal = calcPresupuestoItem(it).valorTotal;
-    if (chartMap.has(it.id)) {
-      chartMap.get(it.id).Ejecución = valorTotal;
+    if (chartMap.has(key)) {
+      chartMap.get(key).Ejecución = valorTotal;
     } else {
-      chartMap.set(it.id, { name: itemLabel(it), Base: 0, Ejecución: valorTotal });
+      chartMap.set(key, { name: itemLabel(it), Base: 0, Ejecución: valorTotal });
     }
   });
-  const chartData = Array.from(chartMap.values()).map((d) => ({
+  const chartDataByActividad = Array.from(chartMap.values()).map((d) => ({
     ...d,
     name: d.name.length > 22 ? d.name.slice(0, 22) + "…" : d.name,
   }));
-  const chartWidth = Math.max(700, chartData.length * 90);
+
+  const chartData = chartMode === "categoria" ? chartDataByCategoria : chartDataByActividad;
+  const chartWidth = chartMode === "categoria" ? null : Math.max(700, chartData.length * 90);
 
   // Ítems de "base": al crearlos se replican automáticamente en "ejecución" (mismo id, en $0,
   // listos para registrar lo real). Los campos de identidad (ítem/categoría/descripción/unidad)
@@ -1451,34 +1738,54 @@ function PresupuestoModule({ data, onChange }) {
       </div>
 
       {chartData.length > 0 && (
-        <div style={{ ...styles.chartBox, overflowX: "auto" }}>
-          <div style={{ width: chartWidth }}>
-            <ResponsiveContainer width="100%" height={340}>
-              <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 70 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
-                <XAxis dataKey="name" tick={{ fill: "#7A8A93", fontSize: 10 }} angle={-40} textAnchor="end" interval={0} height={80} />
-                <YAxis tick={{ fill: "#7A8A93", fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
-                <Tooltip
-                  contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }}
-                  formatter={(v) => fmtMoney(v)}
-                />
-                <RLegend wrapperStyle={{ fontSize: 12 }} />
-                <Bar dataKey="Base" fill="#4FA8D8" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Ejecución" fill="#F5B942" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+        <>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <button
+              className="view-toggle"
+              style={{ ...styles.presSubTabBtn, ...(chartMode === "categoria" ? styles.presSubTabBtnActive : {}) }}
+              onClick={() => setChartMode("categoria")}
+            >
+              Por categoría
+            </button>
+            <button
+              className="view-toggle"
+              style={{ ...styles.presSubTabBtn, ...(chartMode === "actividad" ? styles.presSubTabBtnActive : {}) }}
+              onClick={() => setChartMode("actividad")}
+            >
+              Por actividad
+            </button>
           </div>
-        </div>
+          <div style={{ ...styles.chartBox, overflowX: chartMode === "actividad" ? "auto" : "hidden" }}>
+            <div style={chartMode === "actividad" ? { width: chartWidth } : undefined}>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
+                  <XAxis dataKey="name" tick={false} axisLine={{ stroke: "#232D33" }} tickLine={false} />
+                  <YAxis tick={{ fill: "#7A8A93", fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
+                  <Tooltip
+                    contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }}
+                    formatter={(v) => fmtMoney(v)}
+                  />
+                  <RLegend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="Base" fill="#4FA8D8" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Ejecución" fill="#F5B942" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </>
       )}
 
       <div style={styles.presSubTabs}>
         <button
+          className="view-toggle"
           style={{ ...styles.presSubTabBtn, ...(activeSub === "base" ? styles.presSubTabBtnActive : {}) }}
           onClick={() => setActiveSub("base")}
         >
           Presupuesto base
         </button>
         <button
+          className="view-toggle"
           style={{ ...styles.presSubTabBtn, ...(activeSub === "ejecucion" ? styles.presSubTabBtnActive : {}) }}
           onClick={() => setActiveSub("ejecucion")}
         >
@@ -1517,6 +1824,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
     valorUnitario: "", ivaPct: "",
   });
   const [showPaste, setShowPaste] = useState(false);
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState(null); // { id, label } | null
 
   const grouped = groupPresupuestoItems(items);
 
@@ -1606,7 +1914,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                         <input style={{ ...styles.miniInput, width: 64 }} value={it.unidad} onChange={(e) => onUpdate(it.id, { unidad: e.target.value })} />
                       </td>
                       <td style={styles.ovTd}>
-                        <input type="number" style={styles.miniInput} value={it.valorUnitario} onChange={(e) => onUpdate(it.id, { valorUnitario: e.target.value })} />
+                        <MoneyInput style={styles.miniInput} value={it.valorUnitario} onChange={(val) => onUpdate(it.id, { valorUnitario: val })} />
                       </td>
                       <td style={styles.ovTd}>
                         <input type="number" style={{ ...styles.miniInput, width: 56 }} value={it.ivaPct} onChange={(e) => onUpdate(it.id, { ivaPct: e.target.value })} />
@@ -1618,7 +1926,12 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                       </td>
                       <td style={styles.ovTd}>{fmtMoney(calc.ivaRecuperable)}</td>
                       <td style={styles.ovTd}>
-                        <button style={styles.rowDeleteBtn} onClick={() => onDelete(it.id)}><Trash2 size={13} /></button>
+                        <button
+                          style={styles.rowDeleteBtn}
+                          onClick={() => setConfirmDeleteItem({ id: it.id, label: it.descripcion || "este ítem" })}
+                        >
+                          <Trash2 size={13} />
+                        </button>
                       </td>
                     </tr>
                   );
@@ -1640,7 +1953,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
               <input style={{ ...styles.miniInput, width: 64 }} placeholder="UND" value={newItem.unidad} onChange={(e) => setNewItem({ ...newItem, unidad: e.target.value })} />
             </td>
             <td style={styles.ovTd}>
-              <input type="number" style={styles.miniInput} placeholder="$" value={newItem.valorUnitario} onChange={(e) => setNewItem({ ...newItem, valorUnitario: e.target.value })} />
+              <MoneyInput style={styles.miniInput} placeholder="$" value={newItem.valorUnitario} onChange={(val) => setNewItem({ ...newItem, valorUnitario: val })} />
             </td>
             <td style={styles.ovTd}>
               <input type="number" style={{ ...styles.miniInput, width: 56 }} placeholder="%" value={newItem.ivaPct} onChange={(e) => setNewItem({ ...newItem, ivaPct: e.target.value })} />
@@ -1656,21 +1969,30 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
         </tbody>
       </table>
       </div>
+
+      {confirmDeleteItem && (
+        <ConfirmModal
+          title="Eliminar ítem"
+          message={`¿Eliminar "${confirmDeleteItem.label}"? Esta acción no se puede deshacer.`}
+          confirmLabel="Eliminar"
+          onCancel={() => setConfirmDeleteItem(null)}
+          onConfirm={() => { onDelete(confirmDeleteItem.id); setConfirmDeleteItem(null); }}
+        />
+      )}
     </div>
   );
 }
-
-
 
 function PagosModule({ data, onChange }) {
   const [newOrden, setNewOrden] = useState({ numero: "", proveedor: "", descripcion: "", valorTotal: "" });
   const [openId, setOpenId] = useState(null);
   const [newPago, setNewPago] = useState({ fecha: todayISO(), valor: "", concepto: "", estado: "pagado" });
+  const [confirmDelete, setConfirmDelete] = useState(null); // { kind: "orden" | "pago", ordenId, pagoId, label } | null
   const totals = pagosTotals(data);
   const alertas = pagosProximosAlertas(data);
 
   const addOrden = () => {
-    if (!newOrden.numero.trim() || newOrden.valorTotal === "") return;
+    if (!newOrden.numero.trim() || !newOrden.valorTotal) return;
     const orden = {
       id: uid(),
       numero: newOrden.numero.trim(),
@@ -1687,9 +2009,10 @@ function PagosModule({ data, onChange }) {
     onChange({ ...data, ordenes: data.ordenes.map((o) => (o.id === id ? { ...o, ...patch } : o)) });
   };
   const deleteOrden = (id) => onChange({ ...data, ordenes: data.ordenes.filter((o) => o.id !== id) });
+  const askDeleteOrden = (o) => setConfirmDelete({ kind: "orden", ordenId: o.id, label: o.numero || "esta orden" });
 
   const addPago = (ordenId) => {
-    if (!newPago.fecha || newPago.valor === "") return;
+    if (!newPago.fecha || !newPago.valor) return;
     const pago = { id: uid(), fecha: newPago.fecha, valor: Number(newPago.valor) || 0, concepto: newPago.concepto.trim(), estado: newPago.estado };
     onChange({
       ...data,
@@ -1702,6 +2025,15 @@ function PagosModule({ data, onChange }) {
       ...data,
       ordenes: data.ordenes.map((o) => (o.id === ordenId ? { ...o, pagos: o.pagos.filter((p) => p.id !== pagoId) } : o)),
     });
+  };
+  const askDeletePago = (ordenId, p) =>
+    setConfirmDelete({ kind: "pago", ordenId, pagoId: p.id, label: p.concepto ? `${fmtMoney(p.valor)} (${p.concepto})` : fmtMoney(p.valor) });
+
+  const runConfirmedDelete = () => {
+    if (!confirmDelete) return;
+    if (confirmDelete.kind === "orden") deleteOrden(confirmDelete.ordenId);
+    else if (confirmDelete.kind === "pago") deletePago(confirmDelete.ordenId, confirmDelete.pagoId);
+    setConfirmDelete(null);
   };
   const updatePago = (ordenId, pagoId, patch) => {
     onChange({
@@ -1791,11 +2123,10 @@ function PagosModule({ data, onChange }) {
                       />
                     </td>
                     <td style={styles.ovTd} onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="number"
+                      <MoneyInput
                         style={styles.miniInput}
                         value={o.valorTotal}
-                        onChange={(e) => updateOrden(o.id, { valorTotal: Number(e.target.value) || 0 })}
+                        onChange={(val) => updateOrden(o.id, { valorTotal: val })}
                       />
                     </td>
                     <td style={styles.ovTd}>
@@ -1805,7 +2136,7 @@ function PagosModule({ data, onChange }) {
                       </div>
                     </td>
                     <td style={styles.ovTd}>
-                      <button style={styles.rowDeleteBtn} onClick={(e) => { e.stopPropagation(); deleteOrden(o.id); }}>
+                      <button style={styles.rowDeleteBtn} onClick={(e) => { e.stopPropagation(); askDeleteOrden(o); }}>
                         <Trash2 size={13} />
                       </button>
                     </td>
@@ -1864,7 +2195,7 @@ function PagosModule({ data, onChange }) {
                                       />
                                     </td>
                                     <td style={styles.ovTd}>
-                                      <button style={styles.rowDeleteBtn} onClick={() => deletePago(o.id, p.id)}><Trash2 size={13} /></button>
+                                      <button style={styles.rowDeleteBtn} onClick={() => askDeletePago(o.id, p)}><Trash2 size={13} /></button>
                                     </td>
                                   </tr>
                                 );
@@ -1880,7 +2211,7 @@ function PagosModule({ data, onChange }) {
                                   <input type="date" style={styles.miniInput} value={newPago.fecha} onChange={(e) => setNewPago({ ...newPago, fecha: e.target.value })} />
                                 </td>
                                 <td style={styles.ovTd}>
-                                  <input type="number" style={styles.miniInput} placeholder="$" value={newPago.valor} onChange={(e) => setNewPago({ ...newPago, valor: e.target.value })} />
+                                  <MoneyInput style={styles.miniInput} placeholder="$" value={newPago.valor} onChange={(val) => setNewPago({ ...newPago, valor: val })} />
                                 </td>
                                 <td style={styles.ovTd}>
                                   <input style={styles.miniInput} placeholder="Concepto (opcional)" value={newPago.concepto} onChange={(e) => setNewPago({ ...newPago, concepto: e.target.value })} />
@@ -1909,7 +2240,7 @@ function PagosModule({ data, onChange }) {
                 <input style={styles.miniInput} placeholder="Proveedor" value={newOrden.proveedor} onChange={(e) => setNewOrden({ ...newOrden, proveedor: e.target.value })} />
               </td>
               <td style={styles.ovTd}>
-                <input type="number" style={styles.miniInput} placeholder="$" value={newOrden.valorTotal} onChange={(e) => setNewOrden({ ...newOrden, valorTotal: e.target.value })} />
+                <MoneyInput style={styles.miniInput} placeholder="$" value={newOrden.valorTotal} onChange={(val) => setNewOrden({ ...newOrden, valorTotal: val })} />
               </td>
               <td style={styles.ovTd}></td>
               <td style={styles.ovTd}>
@@ -1919,6 +2250,16 @@ function PagosModule({ data, onChange }) {
           </tbody>
         </table>
       </div>
+
+      {confirmDelete && (
+        <ConfirmModal
+          title={confirmDelete.kind === "orden" ? "Eliminar orden de servicio" : "Eliminar pago"}
+          message={`¿Eliminar ${confirmDelete.kind === "orden" ? "la orden" : "el pago"} "${confirmDelete.label}"? Esta acción no se puede deshacer.`}
+          confirmLabel="Eliminar"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={runConfirmedDelete}
+        />
+      )}
     </div>
   );
 }
@@ -1938,10 +2279,26 @@ function Legend() {
 /* ---------------------------------------------------------------------
    Add project modal
 --------------------------------------------------------------------- */
+const COLOMBIA_DEPARTAMENTOS = Object.keys(COLOMBIA_LOCATIONS).sort((a, b) => a.localeCompare(b, "es"));
+
+// Intenta reconocer "Municipio, Departamento" en el texto de ubicación guardado (para proyectos
+// editados que ya traían ese formato); si no matchea ningún departamento conocido, arranca vacío.
+function parseUbicacion(location) {
+  const [muniRaw, depRaw] = String(location || "").split(",").map((s) => s.trim());
+  if (depRaw && COLOMBIA_LOCATIONS[depRaw]?.includes(muniRaw)) {
+    return { departamento: depRaw, municipio: muniRaw };
+  }
+  return { departamento: "", municipio: "" };
+}
+
 function ProjectFormModal({ onClose, onSave, initial, title, submitLabel }) {
   const [name, setName] = useState(initial?.name || "");
   const [capacity, setCapacity] = useState(initial?.capacity || "");
-  const [location, setLocation] = useState(initial?.location || "");
+  const initialUbicacion = parseUbicacion(initial?.location);
+  const [departamento, setDepartamento] = useState(initialUbicacion.departamento);
+  const [municipio, setMunicipio] = useState(initialUbicacion.municipio);
+
+  const location = departamento && municipio ? `${municipio}, ${departamento}` : "";
 
   return (
     <div style={styles.modalOverlay} onClick={onClose}>
@@ -1959,16 +2316,70 @@ function ProjectFormModal({ onClose, onSave, initial, title, submitLabel }) {
           <input style={styles.input} value={capacity} onChange={(e) => setCapacity(e.target.value)} placeholder="Ej. 9.9" />
         </label>
         <label style={styles.modalField}>
-          <span>Ubicación</span>
-          <input style={styles.input} value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Ej. Cesar" />
+          <span>Departamento</span>
+          <select
+            style={styles.input}
+            value={departamento}
+            onChange={(e) => { setDepartamento(e.target.value); setMunicipio(""); }}
+          >
+            <option value="">Selecciona un departamento…</option>
+            {COLOMBIA_DEPARTAMENTOS.map((dep) => (
+              <option key={dep} value={dep}>{dep}</option>
+            ))}
+          </select>
+        </label>
+        <label style={styles.modalField}>
+          <span>Municipio</span>
+          <select
+            style={styles.input}
+            value={municipio}
+            disabled={!departamento}
+            onChange={(e) => setMunicipio(e.target.value)}
+          >
+            <option value="">{departamento ? "Selecciona un municipio…" : "Elige primero el departamento"}</option>
+            {(COLOMBIA_LOCATIONS[departamento] || []).map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
         </label>
         <button
           style={{ ...styles.addProjectBtn, marginTop: 8, opacity: name.trim() ? 1 : 0.5 }}
           disabled={!name.trim()}
-          onClick={() => onSave(name.trim(), capacity.trim(), location.trim())}
+          onClick={() => onSave(name.trim(), capacity.trim(), location)}
         >
           {submitLabel}
         </button>
+      </div>
+    </div>
+  );
+}
+
+const TAB_LABELS = {
+  resumen: "Resumen", upme: "UPME", energizacion: "Energización",
+  cronograma: "Cronograma", presupuesto: "Presupuesto", pagos: "Pagos",
+};
+
+function ExportPdfModal({ tab, onClose, onChoose }) {
+  const options = [
+    { key: "project", label: "Resumen del proyecto" },
+    ...(tab !== "resumen" ? [{ key: "tab", label: `Pestaña actual (${TAB_LABELS[tab] || tab})` }] : []),
+    { key: "general", label: "Resumen general (todos los proyectos)" },
+  ];
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Exportar PDF</h3>
+          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+        </div>
+        <p style={styles.confirmMsg}>Elige qué quieres exportar. Se abrirá el diálogo de impresión — elige "Guardar como PDF".</p>
+        <div style={styles.exportOptionList}>
+          {options.map((o) => (
+            <button key={o.key} style={styles.exportOptionBtn} onClick={() => onChoose(o.key)}>
+              {o.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -2174,6 +2585,11 @@ const prCard = {
   td: { padding: "6px 10px", borderBottom: "1px solid #eee" },
   tdBarTrack: { display: "inline-block", width: 70, height: 6, background: "#E9ECEF", borderRadius: 4, overflow: "hidden", verticalAlign: "middle", marginRight: 6 },
   tdBarFill: { display: "block", height: "100%", borderRadius: 4 },
+  groupHead: {
+    display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 12,
+    background: "#F0F0F0", padding: "6px 10px", borderRadius: 4, marginTop: 14,
+  },
+  section: { marginBottom: 4, breakInside: "avoid" },
 };
 
 function PrCardHead({ color, children }) {
@@ -2339,6 +2755,239 @@ function PrintResumenGeneral({ projects, projectData }) {
   );
 }
 
+// Vista de impresión de la pestaña que se esté viendo en ese momento dentro de un proyecto
+// (UPME, Energización, Cronograma, Presupuesto o Pagos), con el mismo lenguaje visual claro de prCard.
+function PrintCurrentTab({ project, tab, data }) {
+  const now = new Date();
+  return (
+    <div className="print-only" style={prCard.page}>
+      <div style={prCard.wrap}>
+        <div style={prCard.headerRow}>
+          <h1 style={prCard.h1}>{project.name}</h1>
+          <div style={prCard.meta}>
+            {project.capacity ? `${project.capacity} MWp` : ""}{project.location ? `  ·  ${project.location}` : ""}
+            {"  ·  "}{TAB_LABELS[tab] || tab}
+          </div>
+          <div style={prCard.genAt}>Generado el {fmtDateTime(now)}</div>
+        </div>
+        {tab === "upme" ? (
+          <PrintUpmeContent data={data.upme} />
+        ) : tab === "energizacion" ? (
+          <PrintEnergizacionContent data={data.energizacion} />
+        ) : tab === "cronograma" ? (
+          <PrintCronogramaContent data={data.cronograma} />
+        ) : tab === "presupuesto" ? (
+          <PrintPresupuestoContent data={data.presupuesto} />
+        ) : tab === "pagos" ? (
+          <PrintPagosContent data={data.pagos} />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PrintUpmeContent({ data }) {
+  const active = upmeActiveSteps(data);
+  return (
+    <table style={prCard.table}>
+      <thead>
+        <tr>
+          <th style={prCard.th}>#</th>
+          <th style={prCard.th}>Paso</th>
+          <th style={prCard.th}>Estado</th>
+          <th style={prCard.th}>Fecha</th>
+          <th style={prCard.th}>Notas</th>
+        </tr>
+      </thead>
+      <tbody>
+        {active.map((s) => {
+          const st = data.steps[s.id];
+          return (
+            <tr key={s.id}>
+              <td style={prCard.td}>{s.num}</td>
+              <td style={prCard.td}>
+                {s.label}
+                {s.decision && (
+                  <div style={{ fontSize: 10, color: "#777", marginTop: 2 }}>
+                    {s.decision.question} {st.decision ? (st.decision === "si" ? "Sí" : "No") : "Sin definir"}
+                  </div>
+                )}
+              </td>
+              <td style={prCard.td}>{st.completado ? "Completado" : "Pendiente"}</td>
+              <td style={prCard.td}>{st.fecha ? fmtDate(st.fecha) : "—"}</td>
+              <td style={prCard.td}>{st.notas || "—"}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function PrintEnergizacionContent({ data }) {
+  let cursor = 0;
+  return (
+    <div>
+      {ENERGIZACION_GROUPS.map((g) => {
+        const start = cursor;
+        cursor += g.items.length;
+        const groupCost = g.items.reduce((s, it) => s + it.cost, 0);
+        const doneCost = g.items.reduce((s, it, j) => s + (data.milestones[start + j]?.done ? it.cost : 0), 0);
+        const groupPct = groupCost ? Math.round((doneCost / groupCost) * 100) : 100;
+        return (
+          <div key={g.id} style={prCard.section}>
+            <div style={prCard.groupHead}>
+              <span>{g.label}</span>
+              <span>{groupPct}% · peso {groupCost}</span>
+            </div>
+            <table style={prCard.table}>
+              <thead>
+                <tr>
+                  <th style={prCard.th}>Estado</th>
+                  <th style={prCard.th}>Actividad</th>
+                  <th style={prCard.th}>Día</th>
+                  <th style={prCard.th}>Peso</th>
+                  <th style={prCard.th}>Fecha</th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.items.map((it, j) => {
+                  const state = data.milestones[start + j];
+                  return (
+                    <tr key={j}>
+                      <td style={prCard.td}>{state?.done ? "✓" : "—"}</td>
+                      <td style={prCard.td}>{it.title}</td>
+                      <td style={prCard.td}>{it.day}</td>
+                      <td style={prCard.td}>{it.cost}</td>
+                      <td style={prCard.td}>{state?.done ? fmtDate(state.fecha) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PrintCronogramaContent({ data }) {
+  const pesoTotal = cronogramaPesoTotal(data.tasks);
+  const avance = cronogramaAvanceActual(data.tasks);
+  return (
+    <div>
+      <div style={{ ...prCard.cardSub, marginBottom: 10 }}>
+        Peso total: {pesoTotal}% · Avance ponderado actual: {avance}%
+      </div>
+      <table style={prCard.table}>
+        <thead>
+          <tr>
+            <th style={prCard.th}>Tarea</th>
+            <th style={prCard.th}>Duración</th>
+            <th style={prCard.th}>Inicio</th>
+            <th style={prCard.th}>Fin</th>
+            <th style={prCard.th}>% completado</th>
+            <th style={prCard.th}>Peso</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.tasks.map((t) => (
+            <tr key={t.id}>
+              <td style={{ ...prCard.td, fontWeight: t.esGrupo ? 700 : 400 }}>{t.nombre}</td>
+              <td style={prCard.td}>{t.duracionTexto || "—"}</td>
+              <td style={prCard.td}>{t.fechaInicio ? fmtDate(t.fechaInicio) : "—"}</td>
+              <td style={prCard.td}>{t.fechaFin ? fmtDate(t.fechaFin) : "—"}</td>
+              <td style={prCard.td}>{t.esGrupo ? "—" : `${t.pctCompletado || 0}%`}</td>
+              <td style={prCard.td}>{t.esGrupo ? "—" : `${t.peso}%`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PrintPresupuestoContent({ data }) {
+  const totals = presupuestoTotals(data);
+  const baseByCat = groupPresupuestoItems(data.base);
+  const ejecByCat = groupPresupuestoItems(data.ejecucion);
+  const cats = Array.from(new Set([...baseByCat.map((g) => g.categoria), ...ejecByCat.map((g) => g.categoria)]));
+  const baseTotalsByCat = new Map(baseByCat.map((g) => [g.categoria, presupuestoListTotal(g.items)]));
+  const ejecTotalsByCat = new Map(ejecByCat.map((g) => [g.categoria, presupuestoListTotal(g.items)]));
+
+  return (
+    <div>
+      <div style={{ ...prCard.cardSub, marginBottom: 10 }}>
+        Base: {fmtMoney(totals.base)} · Ejecución: {fmtMoney(totals.ejecutado)} · {totals.pct}% ejecutado
+      </div>
+      <table style={prCard.table}>
+        <thead>
+          <tr>
+            <th style={prCard.th}>Categoría</th>
+            <th style={prCard.th}>Base</th>
+            <th style={prCard.th}>Ejecución</th>
+            <th style={prCard.th}>Diferencia</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cats.map((cat) => {
+            const base = baseTotalsByCat.get(cat) || 0;
+            const ejec = ejecTotalsByCat.get(cat) || 0;
+            return (
+              <tr key={cat}>
+                <td style={prCard.td}>{cat}</td>
+                <td style={prCard.td}>{fmtMoney(base)}</td>
+                <td style={prCard.td}>{fmtMoney(ejec)}</td>
+                <td style={prCard.td}>{fmtMoney(ejec - base)}</td>
+              </tr>
+            );
+          })}
+          <tr>
+            <td style={{ ...prCard.td, fontWeight: 700 }}>Total</td>
+            <td style={{ ...prCard.td, fontWeight: 700 }}>{fmtMoney(totals.base)}</td>
+            <td style={{ ...prCard.td, fontWeight: 700 }}>{fmtMoney(totals.ejecutado)}</td>
+            <td style={{ ...prCard.td, fontWeight: 700 }}>{fmtMoney(totals.diferencia)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PrintPagosContent({ data }) {
+  const totals = pagosTotals(data);
+  return (
+    <div>
+      <div style={{ ...prCard.cardSub, marginBottom: 10 }}>
+        Total órdenes: {fmtMoney(totals.totalOrdenes)} · Pagado: {fmtMoney(totals.totalPagado)} · Saldo: {fmtMoney(totals.totalSaldo)}
+      </div>
+      <table style={prCard.table}>
+        <thead>
+          <tr>
+            <th style={prCard.th}>Orden</th>
+            <th style={prCard.th}>Proveedor</th>
+            <th style={prCard.th}>Valor total</th>
+            <th style={prCard.th}>Pagado</th>
+            <th style={prCard.th}>Saldo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(data.ordenes || []).map((o) => (
+            <tr key={o.id}>
+              <td style={prCard.td}>{o.numero}</td>
+              <td style={prCard.td}>{o.proveedor}</td>
+              <td style={prCard.td}>{fmtMoney(o.valorTotal)}</td>
+              <td style={prCard.td}>{fmtMoney(ordenPagado(o))}</td>
+              <td style={prCard.td}>{fmtMoney(ordenSaldo(o))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function GlobalStyle() {
   return (
     <style>{`
@@ -2349,6 +2998,14 @@ function GlobalStyle() {
       select option { background:#171E23; }
       .spin { animation: spin 1s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
+
+      .readonly-gate input,
+      .readonly-gate select,
+      .readonly-gate textarea,
+      .readonly-gate button:not(.view-toggle) {
+        pointer-events: none;
+        opacity: 0.6;
+      }
 
       .print-only { display: none; }
       @media print {
@@ -2472,6 +3129,7 @@ const styles = {
 
   resumenGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
   card: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, padding: 20 },
+  cardClickable: { cursor: "pointer", transition: "border-color 120ms, background 120ms" },
   cardHead: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#B9C4CA", marginBottom: 14, fontWeight: 600 },
   cardSub: { color: "#7A8A93", fontSize: 12.5, marginTop: 10 },
   bigPctWrap: { display: "flex", alignItems: "center", gap: 14 },
@@ -2480,6 +3138,11 @@ const styles = {
   bigPctNum: { fontFamily: FONT_MONO, fontSize: 20, fontWeight: 700, minWidth: 52, textAlign: "right" },
   alertList: { margin: 0, padding: "0 0 0 18px", display: "flex", flexDirection: "column", gap: 8 },
   alertItem: { fontSize: 13, color: "#E8A33D" },
+  alertsByProjectList: { display: "flex", flexDirection: "column", gap: 16 },
+  alertsByProjectGroup: {},
+  alertsByProjectName: {
+    fontSize: 13, fontWeight: 700, color: "#E8EDEF", marginBottom: 6, cursor: "pointer", width: "fit-content",
+  },
 
   timelineStrip: { display: "flex", alignItems: "center", overflowX: "auto", padding: "6px 2px 18px" },
   phaseNode: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer", minWidth: 140, opacity: 0.75 },
@@ -2563,6 +3226,12 @@ const styles = {
     background: "#E2604F", border: "none", color: "#fff", borderRadius: 8,
     padding: "8px 14px", fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 600,
   },
+  exportOptionList: { display: "flex", flexDirection: "column", gap: 8 },
+  exportOptionBtn: {
+    background: "#1C242A", border: "1px solid #2A3339", color: "#E8EDEF", borderRadius: 8,
+    padding: "12px 14px", fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 500,
+    textAlign: "left",
+  },
 
   emptyState: {
     display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -2635,6 +3304,9 @@ const styles = {
   cronoHead: { display: "flex", justifyContent: "space-between", alignItems: "center", margin: "18px 0 10px", flexWrap: "wrap", gap: 8 },
   pesoTotalTag: { fontFamily: FONT_MONO, fontSize: 11.5, color: "#7A8A93" },
   cronoTableWrap: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, overflow: "auto", marginBottom: 8 },
+  cronoComputedDate: {
+    fontFamily: FONT_MONO, fontSize: 11.5, color: "#7A8A93", padding: "0 6px", display: "inline-block", cursor: "default",
+  },
   miniInput: {
     width: "100%", background: "#1C242A", color: "#E8EDEF", border: "1px solid #2A3339", borderRadius: 6,
     padding: "5px 8px", fontSize: 11.5, fontFamily: FONT_BODY,
@@ -2688,5 +3360,9 @@ const styles = {
   },
   pagosAlertBox: {
     background: "#171E23", border: "1px solid #E8A33D55", borderRadius: 12, padding: "14px 18px", marginBottom: 18,
+  },
+  readonlyBanner: {
+    display: "flex", alignItems: "center", gap: 8, margin: "0 32px", padding: "8px 14px",
+    background: "#1C242A", border: "1px solid #2A3339", borderRadius: 8, color: "#7A8A93", fontSize: 12,
   },
 };
