@@ -32,6 +32,31 @@ create table if not exists project_data (
 alter table project_data add column if not exists presupuesto jsonb not null default '{}'::jsonb;
 alter table project_data add column if not exists pagos jsonb not null default '{}'::jsonb;
 
+-- Historial de cambios: una foto del proyecto por cada guardado (agrupando guardados seguidos de
+-- la misma persona en una sola fila, ver logProjectHistory en App.jsx) — para ver quién cambió qué
+-- y cuándo. Solo lectura desde la UI, no se puede restaurar directamente (ver nota en el modal).
+create table if not exists project_history (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  data jsonb not null,
+  updated_by uuid references auth.users(id),
+  updated_by_email text,
+  created_at timestamptz default now()
+);
+create index if not exists project_history_project_id_created_at_idx
+  on project_history (project_id, created_at desc);
+
+alter table project_history enable row level security;
+drop policy if exists "authenticated read project_history" on project_history;
+drop policy if exists "editor insert project_history" on project_history;
+drop policy if exists "editor update project_history" on project_history;
+create policy "authenticated read project_history" on project_history
+  for select using (auth.role() = 'authenticated');
+create policy "editor insert project_history" on project_history
+  for insert with check (exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor')));
+create policy "editor update project_history" on project_history
+  for update using (exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor')));
+
 -- Perfil simple para mostrar nombre de quien hizo cada cambio (opcional), y el rol de permisos
 -- de cada persona: admin (puede borrar proyectos), editor (puede editar todo menos borrar
 -- proyectos), lector (solo puede ver y exportar).
@@ -117,3 +142,53 @@ create policy "authenticated read profiles" on profiles
 -- =========================================================
 alter publication supabase_realtime add table projects;
 alter publication supabase_realtime add table project_data;
+
+-- =========================================================
+-- Adjuntos: certificados UPME, actas de energización, fotos de avance de obra en el cronograma.
+-- Un bucket privado de Storage (no público — los archivos se descargan con URL firmada temporal)
+-- + una tabla que guarda a qué proyecto/módulo/ítem pertenece cada archivo.
+-- =========================================================
+insert into storage.buckets (id, name, public)
+values ('project-files', 'project-files', false)
+on conflict (id) do nothing;
+
+create table if not exists attachments (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  modulo text not null, -- 'upme' | 'energizacion' | 'cronograma'
+  entidad_id text not null, -- id del paso/hito/tarea al que pertenece
+  file_path text not null, -- ruta dentro del bucket "project-files"
+  file_name text not null,
+  uploaded_by uuid references auth.users(id),
+  uploaded_by_email text,
+  created_at timestamptz default now()
+);
+create index if not exists attachments_project_modulo_entidad_idx
+  on attachments (project_id, modulo, entidad_id);
+
+alter table attachments enable row level security;
+drop policy if exists "authenticated read attachments" on attachments;
+drop policy if exists "editor insert attachments" on attachments;
+drop policy if exists "editor delete attachments" on attachments;
+create policy "authenticated read attachments" on attachments
+  for select using (auth.role() = 'authenticated');
+create policy "editor insert attachments" on attachments
+  for insert with check (exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor')));
+create policy "editor delete attachments" on attachments
+  for delete using (exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor')));
+
+drop policy if exists "authenticated read project files" on storage.objects;
+drop policy if exists "editor upload project files" on storage.objects;
+drop policy if exists "editor delete project files" on storage.objects;
+create policy "authenticated read project files" on storage.objects
+  for select using (bucket_id = 'project-files' and auth.role() = 'authenticated');
+create policy "editor upload project files" on storage.objects
+  for insert with check (
+    bucket_id = 'project-files'
+    and exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+  );
+create policy "editor delete project files" on storage.objects
+  for delete using (
+    bucket_id = 'project-files'
+    and exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+  );

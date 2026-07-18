@@ -2,12 +2,13 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Plus, X, ChevronRight, ChevronDown, Sun, FileCheck, Zap, MapPin, Calendar,
   AlertTriangle, CheckCircle2, Circle, Trash2, Loader2, FileDown, Save,
-  LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste,
+  LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste, Clock, Paperclip,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar } from "recharts";
 import { supabase } from "./lib/supabaseClient";
 import { COLOMBIA_LOCATIONS } from "./lib/colombiaLocations";
 import Login from "./components/Login";
+import CronogramaGantt from "./components/CronogramaGantt";
 import {
   UPME_STEPS, ENERGIZACION_GROUPS, ENERGIZACION_MILESTONES, ENERGIZACION_TOTAL_COST,
   CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, fmtDate, fmtTime, fmtDateTime,
@@ -65,6 +66,7 @@ function Dashboard({ session }) {
   const [view, setView] = useState("overview"); // "overview" | "project"
   const [printTarget, setPrintTarget] = useState(null); // null | "project" | "general" | "tab"
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [role, setRole] = useState("editor"); // "admin" | "editor" | "lector" — "editor" es el default seguro
   const isAdmin = role === "admin";
   const isLector = role === "lector";
@@ -178,8 +180,35 @@ function Dashboard({ session }) {
     } else {
       setSaveStatus("saved");
       setLastSaved(new Date());
+      logProjectHistory(id, data);
     }
   }, [user.id]);
+
+  // Historial de cambios: guarda una foto del proyecto en cada guardado exitoso, para poder ver
+  // después quién cambió qué y cuándo. Para no llenar la tabla con una fila por cada guardado
+  // debounced (cada 700ms mientras alguien escribe), si la persona ya tiene una entrada de los
+  // últimos 15 minutos, la actualiza en vez de crear una nueva — "best effort": si esto falla no
+  // debe afectar el guardado principal del proyecto.
+  const logProjectHistory = useCallback(async (id, data) => {
+    try {
+      const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const { data: recent } = await supabase
+        .from("project_history")
+        .select("id, updated_by, created_at")
+        .eq("project_id", id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const snapshot = { upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos };
+      if (recent && recent.updated_by === user.id && recent.created_at > cutoff) {
+        await supabase.from("project_history").update({ data: snapshot, created_at: new Date().toISOString() }).eq("id", recent.id);
+      } else {
+        await supabase.from("project_history").insert({ project_id: id, data: snapshot, updated_by: user.id, updated_by_email: user.email });
+      }
+    } catch {
+      // silencioso a propósito
+    }
+  }, [user.id, user.email]);
 
   // Agrupa varios cambios rápidos (p. ej. escribir en un campo de texto) en un solo guardado,
   // en vez de mandar una petición a Supabase por cada tecla — eso era lo que causaba los
@@ -269,8 +298,28 @@ function Dashboard({ session }) {
     if (selectedId === id) setSelectedId(null);
   };
 
+  // Descarga un respaldo del proyecto justo antes de borrarlo, para no depender de que alguien se
+  // acuerde de exportar a mano antes de una acción que no se puede deshacer.
+  const backupProjectBeforeDelete = async (project) => {
+    const { data } = await supabase.from("project_data").select("*").eq("project_id", project.id).maybeSingle();
+    const bundle = {
+      exportedAt: new Date().toISOString(),
+      projects: [project],
+      projectData: { [project.id]: data ? ensureFullProjectData(data) : emptyProjectData() },
+    };
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `respaldo-${project.name.replace(/[^a-z0-9]+/gi, "-")}-${todayISO()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
+    const project = projects.find((p) => p.id === deleteTarget.id);
+    if (project) await backupProjectBeforeDelete(project);
     await deleteProject(deleteTarget.id);
     setDeleteTarget(null);
   };
@@ -404,6 +453,7 @@ function Dashboard({ session }) {
                 lastSaved={lastSaved}
                 onSaveNow={saveNow}
                 onExportPDF={() => setShowExportModal(true)}
+                onShowHistory={() => setShowHistory(true)}
               />
               {isLector && (
                 <div style={styles.readonlyBanner}>
@@ -419,16 +469,22 @@ function Dashboard({ session }) {
                   <UpmeModule
                     data={data.upme}
                     onChange={(nextUpme) => updateProjectData(selectedId, (cur) => ({ ...cur, upme: nextUpme }))}
+                    projectId={selectedId}
+                    isLector={isLector}
                   />
                 ) : tab === "energizacion" ? (
                   <EnergizacionModule
                     data={data.energizacion}
                     onChange={(nextEner) => updateProjectData(selectedId, (cur) => ({ ...cur, energizacion: nextEner }))}
+                    projectId={selectedId}
+                    isLector={isLector}
                   />
                 ) : tab === "cronograma" ? (
                   <CronogramaModule
                     data={data.cronograma}
                     onChange={(nextCrono) => updateProjectData(selectedId, (cur) => ({ ...cur, cronograma: nextCrono }))}
+                    projectId={selectedId}
+                    isLector={isLector}
                   />
                 ) : tab === "presupuesto" ? (
                   <PresupuestoModule
@@ -460,6 +516,9 @@ function Dashboard({ session }) {
           }}
         />
       )}
+      {showHistory && selected && (
+        <HistoryModal project={selected} onClose={() => setShowHistory(false)} />
+      )}
       {showAddProject && (
         <ProjectFormModal
           title="Nuevo proyecto"
@@ -483,7 +542,7 @@ function Dashboard({ session }) {
       {deleteTarget && (
         <ConfirmModal
           title="Eliminar proyecto"
-          message={`¿Eliminar "${deleteTarget.name}" y todo su seguimiento? Esta acción no se puede deshacer.`}
+          message={`¿Eliminar "${deleteTarget.name}" y todo su seguimiento? Se descarga un respaldo en JSON antes de borrar, pero la acción en sí no se puede deshacer.`}
           confirmLabel="Eliminar"
           onCancel={() => setDeleteTarget(null)}
           onConfirm={confirmDelete}
@@ -692,10 +751,122 @@ function MoneyInput({ value, onChange, style, placeholder }) {
   );
 }
 
+// Botón de "adjuntos" reutilizable: certificados UPME, actas de energización, fotos de avance de
+// obra. Sube a un bucket privado de Supabase Storage y guarda quién/cuándo en la tabla "attachments".
+// Los archivos se descargan con URL firmada temporal (el bucket no es público). En modo lector no
+// se puede subir ni borrar, solo ver y descargar lo que ya hay.
+function AttachmentsButton({ projectId, modulo, entidadId, readOnly }) {
+  const [open, setOpen] = useState(false);
+  const [files, setFiles] = useState(null); // null = aún no cargado
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef(null);
+
+  const load = async () => {
+    const { data } = await supabase
+      .from("attachments")
+      .select("*")
+      .eq("project_id", projectId)
+      .eq("modulo", modulo)
+      .eq("entidad_id", String(entidadId))
+      .order("created_at", { ascending: false });
+    setFiles(data || []);
+  };
+
+  useEffect(() => {
+    if (open && files === null) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    const path = `${projectId}/${modulo}/${entidadId}/${uid()}-${file.name}`;
+    const { error: uploadError } = await supabase.storage.from("project-files").upload(path, file);
+    if (!uploadError) {
+      const { data: userData } = await supabase.auth.getUser();
+      await supabase.from("attachments").insert({
+        project_id: projectId, modulo, entidad_id: String(entidadId),
+        file_path: path, file_name: file.name,
+        uploaded_by: userData?.user?.id, uploaded_by_email: userData?.user?.email,
+      });
+      await load();
+    }
+    setBusy(false);
+  };
+
+  const handleDownload = async (att) => {
+    const { data } = await supabase.storage.from("project-files").createSignedUrl(att.file_path, 60);
+    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+  };
+
+  const handleDelete = async (att) => {
+    setBusy(true);
+    await supabase.storage.from("project-files").remove([att.file_path]);
+    await supabase.from("attachments").delete().eq("id", att.id);
+    await load();
+    setBusy(false);
+  };
+
+  return (
+    <span style={{ position: "relative", display: "inline-block" }}>
+      <button type="button" style={styles.attachBtn} onClick={() => setOpen((v) => !v)} title="Adjuntos">
+        <Paperclip size={12} /> {files && files.length > 0 ? files.length : ""}
+      </button>
+      {open && (
+        <div style={styles.attachPopover} onClick={(e) => e.stopPropagation()}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: "#E8EDEF" }}>Adjuntos</span>
+            <button type="button" style={styles.iconBtn} onClick={() => setOpen(false)}><X size={13} /></button>
+          </div>
+          {files === null ? (
+            <div style={{ fontSize: 11, color: "#7A8A93" }}>Cargando…</div>
+          ) : files.length === 0 ? (
+            <div style={{ fontSize: 11, color: "#7A8A93", marginBottom: 6 }}>Sin archivos todavía.</div>
+          ) : (
+            <div style={{ maxHeight: 180, overflowY: "auto", marginBottom: 6 }}>
+              {files.map((f) => (
+                <div key={f.id} style={styles.attachRow}>
+                  <span
+                    onClick={() => handleDownload(f)}
+                    style={{ cursor: "pointer", color: "#4FA8D8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    title={f.file_name}
+                  >
+                    {f.file_name}
+                  </span>
+                  {!readOnly && (
+                    <button type="button" style={styles.rowDeleteBtn} onClick={() => handleDelete(f)} disabled={busy}>
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {!readOnly && (
+            <>
+              <input ref={inputRef} type="file" style={{ display: "none" }} onChange={handleUpload} />
+              <button
+                type="button"
+                style={{ ...styles.addProjectBtn, width: "100%", opacity: busy ? 0.6 : 1 }}
+                disabled={busy}
+                onClick={() => inputRef.current?.click()}
+              >
+                {busy ? "Subiendo…" : "Subir archivo"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
 /* ---------------------------------------------------------------------
    Header + tabs
 --------------------------------------------------------------------- */
-function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExportPDF }) {
+function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExportPDF, onShowHistory }) {
   return (
     <div style={styles.header}>
       <div>
@@ -715,6 +886,9 @@ function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExpo
         </div>
         <div style={styles.headerActions}>
           <SaveIndicator status={saveStatus} lastSaved={lastSaved} onSaveNow={onSaveNow} />
+          <button style={styles.pdfBtn} onClick={onShowHistory} title="Ver quién cambió qué y cuándo">
+            <Clock size={14} /> Historial
+          </button>
           <button
             style={styles.pdfBtn}
             onClick={onExportPDF}
@@ -780,6 +954,7 @@ function Resumen({ data, setTab }) {
   const nextMs = nextEnergizacionMilestone(data.energizacion);
   const elapsed = daysBetween(data.energizacion.fechaInicio, todayISO());
   const presTotals = presupuestoTotals(data.presupuesto);
+  const desviacionPct = presTotals.base ? Math.round((presTotals.diferencia / presTotals.base) * 100) : 0;
   const pagTotals = pagosTotals(data.pagos);
   const nextUpme = upmeNextStep(data.upme);
   const alerts = buildProjectAlerts(data);
@@ -823,12 +998,15 @@ function Resumen({ data, setTab }) {
           <DollarSign size={16} color="#7FD08A" />
           <span>Presupuesto</span>
         </div>
-        <BigPct pct={presTotals.pct} color={presTotals.pct > 100 ? "#E2604F" : "#7FD08A"} />
+        <BigPct
+          pct={Math.min(100, Math.abs(desviacionPct))}
+          color={desviacionPct > 0 ? "#E2604F" : "#7FD08A"}
+          label={`${desviacionPct > 0 ? "+" : ""}${desviacionPct}%`}
+        />
         <div style={styles.cardSub}>
+          Desviación vs. base: {presTotals.diferencia > 0 ? "+" : ""}{fmtMoney(presTotals.diferencia)}
+          <br />
           Base {fmtMoney(presTotals.base)} · Ejecución {fmtMoney(presTotals.ejecutado)}
-          {presTotals.diferencia !== 0 && (
-            <> · {presTotals.diferencia > 0 ? "+" : ""}{fmtMoney(presTotals.diferencia)}</>
-          )}
         </div>
       </div>
 
@@ -893,6 +1071,8 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
   const totalEjecutado = loaded.reduce((s, r) => s + r.pres.ejecutado, 0);
   const totalSaldo = loaded.reduce((s, r) => s + r.pag.totalSaldo, 0);
   const projectsWithAlerts = loaded.filter((r) => r.alerts.length > 0);
+  // Plata en riesgo: suma de los sobrecostos (solo donde ejecución > base) entre todos los proyectos.
+  const plataEnRiesgo = loaded.reduce((s, r) => s + Math.max(0, r.pres.diferencia), 0);
 
   return (
     <div>
@@ -927,6 +1107,10 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
         <div style={styles.overviewStat}>
           <div style={{ ...styles.overviewStatNum, fontSize: 17, color: totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}>{fmtMoney(totalSaldo)}</div>
           <div style={styles.overviewStatLabel}>Saldo pendiente por pagar (todos)</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: plataEnRiesgo > 0 ? "#E2604F" : "#5FBF8F" }}>{fmtMoney(plataEnRiesgo)}</div>
+          <div style={styles.overviewStatLabel}>Plata en riesgo (sobrecostos, todos)</div>
         </div>
       </div>
 
@@ -1036,13 +1220,13 @@ function OvBar({ pct, color }) {
   );
 }
 
-function BigPct({ pct, color }) {
+function BigPct({ pct, color, label }) {
   return (
     <div style={styles.bigPctWrap}>
       <div style={styles.bigPctTrack}>
         <div style={{ ...styles.bigPctFill, width: `${pct}%`, background: color }} />
       </div>
-      <span style={{ ...styles.bigPctNum, color }}>{pct}%</span>
+      <span style={{ ...styles.bigPctNum, color }}>{label ?? `${pct}%`}</span>
     </div>
   );
 }
@@ -1050,7 +1234,7 @@ function BigPct({ pct, color }) {
 /* ---------------------------------------------------------------------
    UPME module
 --------------------------------------------------------------------- */
-function UpmeModule({ data, onChange }) {
+function UpmeModule({ data, onChange, projectId, isLector }) {
   const updateStep = (id, patch) => {
     onChange({ ...data, steps: { ...data.steps, [id]: { ...data.steps[id], ...patch } } });
   };
@@ -1103,6 +1287,9 @@ function UpmeModule({ data, onChange }) {
                     <span>{st.completado ? "Completado" : "Marcar como completado"}</span>
                   </label>
                 )}
+                {!skipped && projectId && (
+                  <AttachmentsButton projectId={projectId} modulo="upme" entidadId={s.id} readOnly={isLector} />
+                )}
               </div>
 
               {!skipped && (
@@ -1149,7 +1336,7 @@ function UpmeModule({ data, onChange }) {
 /* ---------------------------------------------------------------------
    Energización module
 --------------------------------------------------------------------- */
-function EnergizacionModule({ data, onChange }) {
+function EnergizacionModule({ data, onChange, projectId, isLector }) {
   const elapsed = daysBetween(data.fechaInicio, todayISO());
   let cursor = 0;
 
@@ -1246,6 +1433,9 @@ function EnergizacionModule({ data, onChange }) {
                     ) : (
                       <span style={styles.wbsItemDatePlaceholder}>—</span>
                     )}
+                    {projectId && (
+                      <AttachmentsButton projectId={projectId} modulo="energizacion" entidadId={i} readOnly={isLector} />
+                    )}
                   </div>
                 );
               })}
@@ -1257,10 +1447,11 @@ function EnergizacionModule({ data, onChange }) {
   );
 }
 
-function CronogramaModule({ data, onChange }) {
+function CronogramaModule({ data, onChange, projectId, isLector }) {
   const [newTask, setNewTask] = useState({ nombre: "", fechaInicio: "", fechaFin: "", peso: "", predecesoras: "" });
   const [newSeg, setNewSeg] = useState({ fecha: todayISO(), avance: "" });
   const [showPaste, setShowPaste] = useState(false);
+  const [showGantt, setShowGantt] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null); // { kind: "task" | "seg", id, label } | null
 
   const pesoTotal = cronogramaPesoTotal(data.tasks);
@@ -1283,6 +1474,11 @@ function CronogramaModule({ data, onChange }) {
   // otra tarea (y por lo tanto calculan su fecha solas) vs. cuáles quedan sin resolver.
   const knownDisplayIds = new Set(data.tasks.map((t) => (t.displayId || "").trim()).filter(Boolean));
   const isComputed = (t) => !t.esGrupo && parsePredecesoras(t.predecesoras).some((p) => knownDisplayIds.has(p.id));
+  // Ids de predecesoras que no matchean ninguna tarea existente — para avisar en vez de fallar en silencio.
+  const predecesorasNoResueltas = (t) => {
+    if (t.esGrupo) return [];
+    return parsePredecesoras(t.predecesoras).filter((p) => !knownDisplayIds.has(p.id)).map((p) => p.id);
+  };
 
   const addTask = () => {
     if (!newTask.nombre.trim() || !newTask.fechaInicio || !newTask.fechaFin || newTask.peso === "") return;
@@ -1390,12 +1586,29 @@ function CronogramaModule({ data, onChange }) {
                   )}
                 </td>
                 <td style={styles.ovTd}>
-                  <input
-                    style={{ ...styles.miniInput, width: 70 }}
-                    value={t.predecesoras || ""}
-                    placeholder="ej. 35CC+5 días"
-                    onChange={(e) => updateTask(t.id, { predecesoras: e.target.value })}
-                  />
+                  {(() => {
+                    const sinResolver = predecesorasNoResueltas(t);
+                    return (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <input
+                          style={{
+                            ...styles.miniInput, width: 70,
+                            ...(sinResolver.length > 0 ? { borderColor: "#E2604F", color: "#E2604F" } : {}),
+                          }}
+                          value={t.predecesoras || ""}
+                          placeholder="ej. 35CC+5 días"
+                          onChange={(e) => updateTask(t.id, { predecesoras: e.target.value })}
+                        />
+                        {sinResolver.length > 0 && (
+                          <AlertTriangle
+                            size={13}
+                            color="#E2604F"
+                            title={`No se encontró la tarea con Id "${sinResolver.join(", ")}" — revisa el Id o corrígelo.`}
+                          />
+                        )}
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td style={styles.ovTd}>
                   <input type="number" style={{ ...styles.miniInput, width: 56 }} value={t.pctCompletado || 0} onChange={(e) => updateTask(t.id, { pctCompletado: e.target.value })} />
@@ -1407,7 +1620,10 @@ function CronogramaModule({ data, onChange }) {
                   <input type="checkbox" checked={!!t.esGrupo} onChange={(e) => updateTask(t.id, { esGrupo: e.target.checked })} />
                 </td>
                 <td style={styles.ovTd}>
-                  <button style={styles.rowDeleteBtn} onClick={() => askDeleteTask(t)}><Trash2 size={13} /></button>
+                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    {projectId && <AttachmentsButton projectId={projectId} modulo="cronograma" entidadId={t.id} readOnly={isLector} />}
+                    <button style={styles.rowDeleteBtn} onClick={() => askDeleteTask(t)}><Trash2 size={13} /></button>
+                  </span>
                 </td>
               </tr>
             ))}
@@ -1443,6 +1659,32 @@ function CronogramaModule({ data, onChange }) {
           </tbody>
         </table>
       </div>
+
+      <div style={styles.cronoHead}>
+        <h3 style={styles.h3}>Gantt</h3>
+        <button style={styles.pasteBtn} onClick={() => setShowGantt((v) => !v)}>
+          {showGantt ? "Ocultar Gantt" : "Mostrar Gantt"}
+        </button>
+      </div>
+      {showGantt && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8, fontSize: 11.5, color: "#7A8A93" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: "#4FA8D8", display: "inline-block" }} /> tarea
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: "#F5B942", display: "inline-block" }} /> grupo/fase
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: "#E2604F", display: "inline-block" }} /> ruta crítica
+            </span>
+            <span>◆ hito</span>
+          </div>
+          <div style={{ marginBottom: 18 }}>
+            <CronogramaGantt tasks={data.tasks} />
+          </div>
+        </>
+      )}
 
       <div style={styles.cronoHead}>
         <h3 style={styles.h3}>Curva S de construcción</h3>
@@ -1665,14 +1907,14 @@ function PresupuestoModule({ data, onChange }) {
     const baseItem = { id, ...fields };
     const ejecItem = {
       id, item: fields.item, categoria: fields.categoria, descripcion: fields.descripcion,
-      unidad: fields.unidad, cantidad: 0, valorUnitario: 0, ivaPct: fields.ivaPct,
+      unidad: fields.unidad, cantidad: 0, valorUnitario: 0, ivaPct: fields.ivaPct, tocado: false,
     };
     onChange({ ...data, base: [...data.base, baseItem], ejecucion: [...data.ejecucion, ejecItem] });
   };
   const addBaseItems = (newItems) => {
     const ejecItems = newItems.map((it) => ({
       id: it.id, item: it.item, categoria: it.categoria, descripcion: it.descripcion,
-      unidad: it.unidad, cantidad: 0, valorUnitario: 0, ivaPct: it.ivaPct,
+      unidad: it.unidad, cantidad: 0, valorUnitario: 0, ivaPct: it.ivaPct, tocado: false,
     }));
     onChange({ ...data, base: [...data.base, ...newItems], ejecucion: [...data.ejecucion, ...ejecItems] });
   };
@@ -1691,7 +1933,11 @@ function PresupuestoModule({ data, onChange }) {
   };
   const deleteBaseItem = (id) => {
     const linked = data.ejecucion.find((it) => it.id === id);
-    const untouched = linked && (Number(linked.cantidad) || 0) === 0 && (Number(linked.valorUnitario) || 0) === 0;
+    // Ítems creados antes de que existiera el campo "tocado" no lo tienen — para esos, se usa el
+    // criterio viejo (cantidad/valor en $0) como respaldo. Para los nuevos, "tocado" es la fuente
+    // real de verdad, porque ejecución ya no arranca en $0 sino igual a base.
+    const tocado = linked?.tocado ?? ((Number(linked?.cantidad) || 0) !== 0 || (Number(linked?.valorUnitario) || 0) !== 0);
+    const untouched = linked && !tocado;
     onChange({
       ...data,
       base: data.base.filter((it) => it.id !== id),
@@ -1703,7 +1949,7 @@ function PresupuestoModule({ data, onChange }) {
   // no contemplados en la base.
   const addEjecItem = (fields) => onChange({ ...data, ejecucion: [...data.ejecucion, { id: uid(), ...fields }] });
   const addEjecItems = (newItems) => onChange({ ...data, ejecucion: [...data.ejecucion, ...newItems] });
-  const updateEjecItem = (id, patch) => onChange({ ...data, ejecucion: data.ejecucion.map((it) => (it.id === id ? { ...it, ...patch } : it)) });
+  const updateEjecItem = (id, patch) => onChange({ ...data, ejecucion: data.ejecucion.map((it) => (it.id === id ? { ...it, ...patch, tocado: true } : it)) });
   const deleteEjecItem = (id) => onChange({ ...data, ejecucion: data.ejecucion.filter((it) => it.id !== id) });
 
   const baseIds = new Set(data.base.map((it) => it.id));
@@ -2359,6 +2605,76 @@ const TAB_LABELS = {
   cronograma: "Cronograma", presupuesto: "Presupuesto", pagos: "Pagos",
 };
 
+// Lista quién guardó cambios en el proyecto y cuándo (tabla project_history). Es de solo lectura —
+// no restaura nada directamente, para evitar que un clic accidental pise trabajo reciente; si hace
+// falta volver a un estado anterior, se descarga esa foto en JSON y se usa "Importar" a mano.
+function HistoryModal({ project, onClose }) {
+  const [rows, setRows] = useState(null); // null = cargando
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("project_history")
+        .select("id, data, updated_by_email, created_at")
+        .eq("project_id", project.id)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      if (cancelled) return;
+      if (error) setError(true);
+      else setRows(data || []);
+    })();
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  const downloadSnapshot = (row) => {
+    const bundle = { exportedAt: row.created_at, projects: [project], projectData: { [project.id]: row.data } };
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `historial-${project.name.replace(/[^a-z0-9]+/gi, "-")}-${row.created_at.slice(0, 16).replace(/[:T]/g, "-")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Historial de cambios</h3>
+          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+        </div>
+        <p style={styles.confirmMsg}>
+          Últimos guardados de "{project.name}". Cada fila descarga una foto de cómo estaba el proyecto en ese momento.
+        </p>
+        {error ? (
+          <div style={{ color: "#E2604F", fontSize: 13 }}>No se pudo cargar el historial. ¿Ya corriste la migración de "project_history" en Supabase?</div>
+        ) : rows === null ? (
+          <div style={{ color: "#7A8A93", fontSize: 13 }}>Cargando…</div>
+        ) : rows.length === 0 ? (
+          <div style={{ color: "#7A8A93", fontSize: 13 }}>Todavía no hay historial registrado para este proyecto.</div>
+        ) : (
+          <div style={{ maxHeight: 360, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+            {rows.map((r) => (
+              <button
+                key={r.id}
+                style={{ ...styles.exportOptionBtn, display: "flex", justifyContent: "space-between", alignItems: "center", textAlign: "left" }}
+                onClick={() => downloadSnapshot(r)}
+                title="Descargar esta versión como JSON"
+              >
+                <span>{fmtDateTime(new Date(r.created_at))}</span>
+                <span style={{ color: "#7A8A93", fontSize: 11.5 }}>{r.updated_by_email || "—"}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ExportPdfModal({ tab, onClose, onChoose }) {
   const options = [
     { key: "project", label: "Resumen del proyecto" },
@@ -2601,11 +2917,11 @@ function PrCardHead({ color, children }) {
   );
 }
 
-function PrBigPct({ pct, color }) {
+function PrBigPct({ pct, color, label }) {
   return (
     <div style={prCard.bigPctRow}>
       <div style={prCard.bigPctTrack}><div style={{ ...prCard.bigPctFill, width: `${pct}%`, background: color }} /></div>
-      <span style={{ ...prCard.bigPctNum, color }}>{pct}%</span>
+      <span style={{ ...prCard.bigPctNum, color }}>{label ?? `${pct}%`}</span>
     </div>
   );
 }
@@ -2618,6 +2934,7 @@ function PrintResumenProject({ project, data }) {
   const nextMs = nextEnergizacionMilestone(data.energizacion);
   const elapsed = daysBetween(data.energizacion.fechaInicio, todayISO());
   const presTotals = presupuestoTotals(data.presupuesto);
+  const desviacionPct = presTotals.base ? Math.round((presTotals.diferencia / presTotals.base) * 100) : 0;
   const pagTotals = pagosTotals(data.pagos);
   const nextUpme = upmeNextStep(data.upme);
   const alerts = buildProjectAlerts(data);
@@ -2645,10 +2962,15 @@ function PrintResumenProject({ project, data }) {
           </div>
           <div style={prCard.card}>
             <PrCardHead color="#7FD08A">Presupuesto</PrCardHead>
-            <PrBigPct pct={presTotals.pct} color={presTotals.pct > 100 ? "#C0392B" : "#3E9B4F"} />
+            <PrBigPct
+              pct={Math.min(100, Math.abs(desviacionPct))}
+              color={desviacionPct > 0 ? "#C0392B" : "#3E9B4F"}
+              label={`${desviacionPct > 0 ? "+" : ""}${desviacionPct}%`}
+            />
             <div style={prCard.cardSub}>
+              Desviación vs. base: {presTotals.diferencia > 0 ? "+" : ""}{fmtMoney(presTotals.diferencia)}
+              <br />
               Base {fmtMoney(presTotals.base)} · Ejecución {fmtMoney(presTotals.ejecutado)}
-              {presTotals.diferencia !== 0 && <> · {presTotals.diferencia > 0 ? "+" : ""}{fmtMoney(presTotals.diferencia)}</>}
             </div>
           </div>
           <div style={prCard.card}>
@@ -3317,6 +3639,18 @@ const styles = {
   },
   rowDeleteBtn: { background: "none", border: "none", color: "#5A6870", cursor: "pointer", padding: 4 },
   chartBox: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, padding: "16px 8px 4px", marginBottom: 18 },
+  attachBtn: {
+    display: "inline-flex", alignItems: "center", gap: 3, background: "none", border: "1px solid #2A3339",
+    borderRadius: 6, color: "#7A8A93", cursor: "pointer", padding: "3px 6px", fontSize: 10.5, fontFamily: FONT_MONO,
+  },
+  attachPopover: {
+    position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 30, background: "#171E23",
+    border: "1px solid #2A3339", borderRadius: 10, padding: 10, width: 260, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+  },
+  attachRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "5px 2px",
+    borderBottom: "1px solid #232D33", fontSize: 11.5, color: "#E8EDEF",
+  },
 
   // Presupuesto module
   presSubTabs: { display: "flex", gap: 6, marginBottom: 14 },

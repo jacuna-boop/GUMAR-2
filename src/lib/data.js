@@ -290,7 +290,7 @@ function buildPresupuestoBaseFromTemplate() {
   PRESUPUESTO_BASE_TEMPLATE.forEach((t) => {
     const id = uid();
     base.push({ id, item: t.item, categoria: t.categoria, descripcion: t.descripcion, cantidad: t.cantidad, unidad: t.unidad, valorUnitario: t.valorUnitario, ivaPct: 0 });
-    ejecucion.push({ id, item: t.item, categoria: t.categoria, descripcion: t.descripcion, cantidad: t.cantidad, unidad: t.unidad, valorUnitario: t.valorUnitario, ivaPct: 0 });
+    ejecucion.push({ id, item: t.item, categoria: t.categoria, descripcion: t.descripcion, cantidad: t.cantidad, unidad: t.unidad, valorUnitario: t.valorUnitario, ivaPct: 0, tocado: false });
   });
   return { base, ejecucion };
 }
@@ -1065,10 +1065,89 @@ function computeCronogramaSchedule(tasks) {
     return r;
   };
 
-  return tasks.map((t) => {
+  const withPredecessors = tasks.map((t) => {
     const r = resolveTask(t);
     return r.fechaInicio === t.fechaInicio && r.fechaFin === t.fechaFin ? t : { ...t, ...r };
   });
+
+  // Las filas "Grupo" (fase/categoría) toman su fecha de inicio/fin del min/max de las tareas que
+  // le siguen hasta el próximo grupo — igual que un resumen de Project, que se ajusta solo cuando
+  // sus hijas cambian de fecha por la cascada de predecesoras.
+  const result = [...withPredecessors];
+  for (let i = 0; i < result.length; i++) {
+    if (!result[i].esGrupo) continue;
+    let minInicio = null;
+    let maxFin = null;
+    for (let j = i + 1; j < result.length && !result[j].esGrupo; j++) {
+      const child = result[j];
+      if (child.fechaInicio && (!minInicio || child.fechaInicio < minInicio)) minInicio = child.fechaInicio;
+      if (child.fechaFin && (!maxFin || child.fechaFin > maxFin)) maxFin = child.fechaFin;
+    }
+    if (minInicio && maxFin && (result[i].fechaInicio !== minInicio || result[i].fechaFin !== maxFin)) {
+      result[i] = { ...result[i], fechaInicio: minInicio, fechaFin: maxFin };
+    }
+  }
+  return result;
+}
+
+// Ruta crítica aproximada: para cada tarea con predecesoras, identifica cuál de ellas fue la que
+// realmente definió su fecha de inicio (la que dio el máximo al calcular en computeCronogramaSchedule)
+// — esa es su "predecesora crítica". Partiendo de la(s) tarea(s) que terminan más tarde (el fin del
+// proyecto), se camina hacia atrás por esas predecesoras críticas: esa cadena es la ruta crítica.
+// Como el motor mezcla tareas ancladas a mano con tareas auto-programadas, esto es una aproximación
+// razonable (no un CPM completo con holguras) — solo cubre la parte que depende de predecesoras.
+function computeCriticalPath(tasks) {
+  const byDisplayId = new Map();
+  tasks.forEach((t) => {
+    const did = (t.displayId || "").trim();
+    if (did && !byDisplayId.has(did)) byDisplayId.set(did, t);
+  });
+
+  const criticalPred = new Map(); // task.id -> id interno de su predecesora crítica, o null
+  tasks.forEach((t) => {
+    if (t.esGrupo) return;
+    const preds = parsePredecesoras(t.predecesoras).filter((p) => byDisplayId.has(p.id));
+    if (preds.length === 0) {
+      criticalPred.set(t.id, null);
+      return;
+    }
+    const duracion = parseDuracionDias(t.duracionTexto);
+    let best = null;
+    let bestComienzo = null;
+    preds.forEach((p) => {
+      const predTask = byDisplayId.get(p.id);
+      let impliedComienzo;
+      if (p.tipo === "CC") {
+        impliedComienzo = addWorkingDays(predTask.fechaInicio, p.lag);
+      } else if (p.tipo === "FF") {
+        impliedComienzo = addWorkingDays(addWorkingDays(predTask.fechaFin, p.lag), -duracion);
+      } else if (p.tipo === "CF") {
+        impliedComienzo = addWorkingDays(addWorkingDays(predTask.fechaInicio, p.lag), -duracion);
+      } else {
+        impliedComienzo = addWorkingDays(predTask.fechaFin, p.lag);
+      }
+      if (!bestComienzo || impliedComienzo > bestComienzo) {
+        bestComienzo = impliedComienzo;
+        best = predTask.id;
+      }
+    });
+    criticalPred.set(t.id, best);
+  });
+
+  const leaf = tasks.filter((t) => !t.esGrupo && t.fechaFin);
+  if (leaf.length === 0) return new Set();
+  const maxFin = leaf.reduce((m, t) => (t.fechaFin > m ? t.fechaFin : m), leaf[0].fechaFin);
+  const ends = leaf.filter((t) => t.fechaFin === maxFin);
+
+  const critical = new Set();
+  ends.forEach((end) => {
+    let cur = end.id;
+    while (cur && !critical.has(cur)) {
+      critical.add(cur);
+      cur = criticalPred.get(cur);
+    }
+  });
+  return critical;
 }
 
 const STATUS_LABELS = {
@@ -1238,6 +1317,7 @@ export {
   parsePredecesoras,
   addWorkingDays,
   computeCronogramaSchedule,
+  computeCriticalPath,
   buildReportHTML,
   escapeHTML,
   upmeProgress,
