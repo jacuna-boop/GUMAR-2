@@ -2,9 +2,11 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Plus, X, ChevronRight, ChevronDown, Sun, FileCheck, Zap, MapPin, Calendar,
   AlertTriangle, CheckCircle2, Circle, Trash2, Loader2, FileDown, Save,
-  LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste, Clock, Paperclip,
+  LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste, Clock, Paperclip, FileUp,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar } from "recharts";
+import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { supabase } from "./lib/supabaseClient";
 import { COLOMBIA_LOCATIONS } from "./lib/colombiaLocations";
 import Login from "./components/Login";
@@ -490,11 +492,14 @@ function Dashboard({ session }) {
                   <PresupuestoModule
                     data={data.presupuesto}
                     onChange={(nextPres) => updateProjectData(selectedId, (cur) => ({ ...cur, presupuesto: nextPres }))}
+                    pagos={data.pagos}
                   />
                 ) : (
                   <PagosModule
                     data={data.pagos}
                     onChange={(nextPagos) => updateProjectData(selectedId, (cur) => ({ ...cur, pagos: nextPagos }))}
+                    projectName={selected.name}
+                    presupuestoBase={data.presupuesto.base}
                   />
                 )}
               </div>
@@ -597,6 +602,11 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
           const d = projectData[p.id];
           const upmePct = d ? upmeProgress(d.upme) : 0;
           const enerPct = d ? energizacionProgress(d.energizacion) : 0;
+          const enerNextMs = d ? nextEnergizacionMilestone(d.energizacion) : null;
+          const enerDelayed = enerNextMs && enerNextMs.delayed;
+          const presPct = d ? presupuestoTotals(d.presupuesto).pct : 0;
+          const pagTotals = d ? pagosTotals(d.pagos) : null;
+          const pagPct = pagTotals && pagTotals.totalOrdenes ? Math.round((pagTotals.totalPagado / pagTotals.totalOrdenes) * 100) : 0;
           return (
             <div
               key={p.id}
@@ -636,8 +646,10 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
               <div style={styles.projectMeta}>
                 {p.capacity ? `${p.capacity} MWp` : ""}{p.location ? ` · ${p.location}` : ""}
               </div>
-              <MiniBar label="UPME" pct={upmePct} color="#4FA8D8" />
-              <MiniBar label="Energización" pct={enerPct} color="#F5B942" />
+              <MiniBar label="UPME" pct={upmePct} color={upmePct >= 100 ? "#5FBF8F" : "#4FA8D8"} />
+              <MiniBar label="Energización" pct={enerPct} color={enerPct >= 100 ? "#5FBF8F" : enerDelayed ? "#E2604F" : "#4FA8D8"} />
+              <MiniBar label="Presupuesto" pct={Math.min(100, presPct)} displayLabel={`${presPct}%`} color={presPct > 100 ? "#E2604F" : "#7FD08A"} />
+              <MiniBar label="Pagos" pct={Math.min(100, pagPct)} displayLabel={`${pagPct}%`} color={pagPct > 100 ? "#E2604F" : pagPct >= 100 ? "#5FBF8F" : "#4FA8D8"} />
             </div>
           );
         })}
@@ -681,14 +693,14 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
   );
 }
 
-function MiniBar({ label, pct, color }) {
+function MiniBar({ label, pct, color, displayLabel }) {
   return (
     <div style={styles.miniBarRow}>
       <span style={styles.miniBarLabel}>{label}</span>
       <div style={styles.miniBarTrack}>
         <div style={{ ...styles.miniBarFill, width: `${pct}%`, background: color }} />
       </div>
-      <span style={styles.miniBarPct}>{pct}%</span>
+      <span style={styles.miniBarPct}>{displayLabel ?? `${pct}%`}</span>
     </div>
   );
 }
@@ -931,7 +943,7 @@ function TabBtn({ active, onClick, icon, label }) {
 
 function buildProjectAlerts(data) {
   const nextMs = nextEnergizacionMilestone(data.energizacion);
-  const elapsed = daysBetween(data.energizacion.fechaInicio, todayISO());
+  const elapsed = data.energizacion.fechaInicio ? daysBetween(data.energizacion.fechaInicio, todayISO()) : null;
   const presTotals = presupuestoTotals(data.presupuesto);
   const pagTotals = pagosTotals(data.pagos);
   const alerts = [];
@@ -952,7 +964,7 @@ function Resumen({ data, setTab }) {
   const upmePct = upmeProgress(data.upme);
   const enerPct = energizacionProgress(data.energizacion);
   const nextMs = nextEnergizacionMilestone(data.energizacion);
-  const elapsed = daysBetween(data.energizacion.fechaInicio, todayISO());
+  const elapsed = data.energizacion.fechaInicio ? daysBetween(data.energizacion.fechaInicio, todayISO()) : null;
   const presTotals = presupuestoTotals(data.presupuesto);
   const desviacionPct = presTotals.base ? Math.round((presTotals.diferencia / presTotals.base) * 100) : 0;
   const pagTotals = pagosTotals(data.pagos);
@@ -985,7 +997,7 @@ function Resumen({ data, setTab }) {
         </div>
         <BigPct pct={enerPct} color="#F5B942" />
         <div style={styles.cardSub}>
-          Día {elapsed} de 200 · {nextMs ? `Siguiente: ${nextMs.title} (día ${nextMs.day})` : "Todas las actividades completadas"}
+          {elapsed === null ? "Falta asignar fecha de inicio de trámites" : `Día ${elapsed} de 200`} · {nextMs ? `Siguiente: ${nextMs.title} (día ${nextMs.day})` : "Todas las actividades completadas"}
         </div>
       </div>
 
@@ -1055,7 +1067,7 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
     const upmePct = upmeProgress(d.upme);
     const enerPct = energizacionProgress(d.energizacion);
     const nextMs = nextEnergizacionMilestone(d.energizacion);
-    const elapsed = daysBetween(d.energizacion.fechaInicio, todayISO());
+    const elapsed = d.energizacion.fechaInicio ? daysBetween(d.energizacion.fechaInicio, todayISO()) : null;
     const delayed = nextMs && nextMs.delayed;
     const pres = presupuestoTotals(d.presupuesto);
     const pag = pagosTotals(d.pagos);
@@ -1191,7 +1203,7 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
                     >
                       {fmtMoney(pag.totalSaldo)}
                     </td>
-                    <td style={styles.ovTd}>{elapsed} / 200</td>
+                    <td style={styles.ovTd}>{elapsed === null ? "—" : `${elapsed} / 200`}</td>
                     <td
                       style={{ ...styles.ovTd, color: delayed ? "#E2604F" : "#B9C4CA" }}
                       onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "energizacion"); }}
@@ -1209,13 +1221,13 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
   );
 }
 
-function OvBar({ pct, color }) {
+function OvBar({ pct, color, label }) {
   return (
     <div style={styles.ovBarWrap}>
       <div style={styles.ovBarTrack}>
         <div style={{ ...styles.ovBarFill, width: `${pct}%`, background: color }} />
       </div>
-      <span style={{ ...styles.ovBarPct, color }}>{pct}%</span>
+      <span style={{ ...styles.ovBarPct, color }}>{label ?? `${pct}%`}</span>
     </div>
   );
 }
@@ -1337,7 +1349,7 @@ function UpmeModule({ data, onChange, projectId, isLector }) {
    Energización module
 --------------------------------------------------------------------- */
 function EnergizacionModule({ data, onChange, projectId, isLector }) {
-  const elapsed = daysBetween(data.fechaInicio, todayISO());
+  const elapsed = data.fechaInicio ? daysBetween(data.fechaInicio, todayISO()) : null;
   let cursor = 0;
 
   const toggleDone = (idx) => {
@@ -1362,7 +1374,7 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
           />
         </label>
         <div style={styles.dayCounter}>
-          Día <strong>{elapsed}</strong> de 200
+          {elapsed === null ? "Asigna la fecha de inicio para empezar a contar días" : (<>Día <strong>{elapsed}</strong> de 200</>)}
         </div>
         <div style={styles.dayCounter}>
           Avance ponderado por costo: <strong style={{ color: "#F5B942" }}>{overallPct}%</strong>
@@ -1403,7 +1415,7 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
               {g.items.map((it, j) => {
                 const i = groupStart + j;
                 const state = data.milestones[i];
-                const delayed = !state.done && elapsed > it.day;
+                const delayed = !state.done && elapsed !== null && elapsed > it.day;
                 return (
                   <div
                     key={i}
@@ -1848,10 +1860,20 @@ function PasteCronogramaModal({ existingTasks, onClose, onImport }) {
 }
 
 
-function PresupuestoModule({ data, onChange }) {
+function PresupuestoModule({ data, onChange, pagos }) {
   const [activeSub, setActiveSub] = useState("base"); // "base" | "ejecucion"
   const [chartMode, setChartMode] = useState("categoria"); // "categoria" | "actividad"
   const totals = presupuestoTotals(data);
+
+  // Suma lo pagado (solo pagos en estado "pagado", no "programado") de las órdenes que la persona
+  // amarró a cada ítem del presupuesto desde la pestaña Pagos — para ver de un vistazo cuánto se ha
+  // pagado realmente hacia cada actividad.
+  const pagadoPorItem = new Map();
+  (pagos?.ordenes || []).forEach((o) => {
+    if (!o.presupuestoItemId) return;
+    const actual = pagadoPorItem.get(o.presupuestoItemId) || 0;
+    pagadoPorItem.set(o.presupuestoItemId, actual + ordenPagado(o));
+  });
 
   // Por categoría: se ve completa en la página sin scroll (útil como vista general).
   const chartDataByCategoria = (() => {
@@ -2013,7 +2035,19 @@ function PresupuestoModule({ data, onChange }) {
                     formatter={(v) => fmtMoney(v)}
                   />
                   <RLegend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar dataKey="Base" fill="#4FA8D8" radius={[4, 4, 0, 0]} />
+                  <Bar
+                    dataKey="Base"
+                    fill="#4FA8D8"
+                    radius={[4, 4, 0, 0]}
+                    background={({ x, y, width, height, index }) => {
+                      const d = chartData[index];
+                      const excedido = d && d.Ejecución > d.Base;
+                      if (!excedido) return <rect x={x} y={y} width={width} height={height} fill="transparent" />;
+                      // Un solo rectángulo limpio (sin esquinas redondas) que cubre las dos barras de
+                      // la actividad completa, igual de sencillo que el gris que Recharts pinta al pasar el mouse.
+                      return <rect x={x} y={y} width={width * 2.15} height={height} fill="#E2604F" fillOpacity={0.28} />;
+                    }}
+                  />
                   <Bar dataKey="Ejecución" fill="#F5B942" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -2047,13 +2081,14 @@ function PresupuestoModule({ data, onChange }) {
       )}
 
       {activeSub === "base" ? (
-        <PresupuestoTable items={data.base} onAdd={addBaseItem} onAddMany={addBaseItems} onUpdate={updateBaseItem} onDelete={deleteBaseItem} />
+        <PresupuestoTable items={data.base} onAdd={addBaseItem} onAddMany={addBaseItems} onUpdate={updateBaseItem} onDelete={deleteBaseItem} pagadoPorItem={pagadoPorItem} />
       ) : (
         <PresupuestoTable
           items={data.ejecucion}
           onAdd={addEjecItem}
           onAddMany={addEjecItems}
           onUpdate={updateEjecItem}
+          pagadoPorItem={pagadoPorItem}
           onDelete={deleteEjecItem}
           linkedIds={baseIds}
           baseValoresPorItem={baseValoresPorItem}
@@ -2064,7 +2099,7 @@ function PresupuestoModule({ data, onChange }) {
   );
 }
 
-function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds, baseValoresPorItem, baseValoresPorCategoria }) {
+function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds, baseValoresPorItem, baseValoresPorCategoria, pagadoPorItem }) {
   const [newItem, setNewItem] = useState({
     item: "", categoria: "", descripcion: "", cantidad: "", unidad: "",
     valorUnitario: "", ivaPct: "",
@@ -2117,6 +2152,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
             <th style={styles.ovTh}>Valor unit. (con IVA)</th>
             <th style={styles.ovTh}>Valor total</th>
             <th style={styles.ovTh}>IVA recuperable</th>
+            <th style={styles.ovTh}>Pagado (real)</th>
             <th style={styles.ovTh}></th>
           </tr>
         </thead>
@@ -2171,6 +2207,9 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                         {itemExcedido && <div style={styles.presExcedidoTag}>+{fmtMoney(calc.valorTotal - baseValor)} vs. base</div>}
                       </td>
                       <td style={styles.ovTd}>{fmtMoney(calc.ivaRecuperable)}</td>
+                      <td style={{ ...styles.ovTd, color: pagadoPorItem?.get(it.id) ? "#7FD08A" : "#7A8A93" }}>
+                        {fmtMoney(pagadoPorItem?.get(it.id) || 0)}
+                      </td>
                       <td style={styles.ovTd}>
                         <button
                           style={styles.rowDeleteBtn}
@@ -2208,6 +2247,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
               <input style={styles.miniInput} placeholder="Categoría (ej. Equipos principales)" value={newItem.categoria} onChange={(e) => setNewItem({ ...newItem, categoria: e.target.value })} />
             </td>
             <td style={styles.ovTd}></td>
+            <td style={styles.ovTd}></td>
             <td style={styles.ovTd}>
               <button style={styles.addRowBtn} onClick={addItem}><Plus size={14} /></button>
             </td>
@@ -2229,11 +2269,177 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
   );
 }
 
-function PagosModule({ data, onChange }) {
-  const [newOrden, setNewOrden] = useState({ numero: "", proveedor: "", descripcion: "", valorTotal: "" });
+// Arma una fila plana por cada pago (y una fila por orden sin pagos). Si el proyecto todavía no
+// tiene ninguna orden, arma una fila de ejemplo marcada como tal (para que se sepa que hay que
+// borrarla) en vez de una plantilla completamente en blanco.
+function buildPagosSheetRows(data) {
+  const rows = [];
+  if (data.ordenes.length === 0) {
+    rows.push({
+      numero: "OS-001", proveedor: "Proveedor de ejemplo", descripcion: "Descripción de ejemplo",
+      valorTotal: 5000000, fecha: "2026-01-15", valorPagado: 2000000, concepto: "Anticipo", estado: "pagado",
+      esEjemplo: true,
+    });
+    return rows;
+  }
+  data.ordenes.forEach((o) => {
+    const base = { numero: o.numero, proveedor: o.proveedor, descripcion: o.descripcion, valorTotal: o.valorTotal };
+    if (o.pagos.length === 0) {
+      rows.push({ ...base, fecha: "", valorPagado: "", concepto: "", estado: "" });
+    } else {
+      o.pagos.forEach((p) => {
+        rows.push({ ...base, fecha: p.fecha, valorPagado: p.valor, concepto: p.concepto, estado: p.estado });
+      });
+    }
+  });
+  return rows;
+}
+
+const PAGOS_COLUMNS = [
+  { header: "Número de orden", key: "numero", width: 18 },
+  { header: "Proveedor", key: "proveedor", width: 26 },
+  { header: "Descripción", key: "descripcion", width: 32 },
+  { header: "Valor total orden", key: "valorTotal", width: 20 },
+  { header: "Fecha de pago (AAAA-MM-DD)", key: "fecha", width: 24 },
+  { header: "Valor pagado", key: "valorPagado", width: 18 },
+  { header: "Concepto", key: "concepto", width: 26 },
+  { header: "Estado (pagado/programado)", key: "estado", width: 22 },
+];
+const PAGOS_ACCENT = "FFE77DA8"; // rosa de la pestaña Pagos
+
+async function downloadPagosTemplate(data, projectName) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Control de Parques Solares";
+  wb.created = new Date();
+
+  const info = wb.addWorksheet("Instrucciones");
+  info.getColumn(1).width = 95;
+  info.addRow([`Plantilla de pagos — ${projectName || ""}`]).font = { bold: true, size: 15, color: { argb: PAGOS_ACCENT } };
+  info.addRow([]);
+  [
+    "Cómo llenar esta plantilla:",
+    "1. Ve a la pestaña \"Pagos\". Cada fila es un pago.",
+    "2. Si una orden tiene varios pagos, repite el mismo \"Número de orden\" en varias filas.",
+    "3. Si una orden todavía no tiene ningún pago registrado, deja vacías las columnas de pago",
+    "   (Fecha, Valor pagado, Concepto, Estado) y solo llena Número/Proveedor/Descripción/Valor total.",
+    "4. \"Estado\" solo acepta pagado o programado — elige de la lista desplegable de esa columna.",
+    "5. Las fechas van en formato AAAA-MM-DD, por ejemplo 2026-03-15.",
+    "6. Borra la fila de ejemplo (en cursiva) antes de subir el archivo, si no la necesitas.",
+    "7. Al subir este archivo a la plataforma, se REEMPLAZAN todas las órdenes de este proyecto",
+    "   por lo que traiga el archivo — no se suman a las que ya existen.",
+  ].forEach((line, i) => {
+    const row = info.addRow([line]);
+    if (i === 0) row.font = { bold: true };
+  });
+
+  const ws = wb.addWorksheet("Pagos");
+  ws.columns = PAGOS_COLUMNS;
+  const rows = buildPagosSheetRows(data);
+  rows.forEach((r) => {
+    const row = ws.addRow(r);
+    if (r.esEjemplo) row.font = { italic: true, color: { argb: "FF7A8A93" } };
+  });
+
+  const headerRow = ws.getRow(1);
+  headerRow.height = 22;
+  headerRow.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: PAGOS_ACCENT } };
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  });
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  ws.autoFilter = { from: "A1", to: "H1" };
+
+  ws.getColumn("valorTotal").numFmt = '"$"#,##0';
+  ws.getColumn("valorPagado").numFmt = '"$"#,##0';
+
+  const thin = { style: "thin", color: { argb: "FFDDDDDD" } };
+  for (let i = 1; i <= Math.max(rows.length + 1, 30); i++) {
+    ws.getRow(i).eachCell({ includeEmpty: true }, (cell) => {
+      cell.border = { top: thin, left: thin, bottom: thin, right: thin };
+    });
+  }
+
+  const estadoCol = ws.getColumn("estado").letter;
+  for (let i = 2; i <= 500; i++) {
+    ws.getCell(`${estadoCol}${i}`).dataValidation = { type: "list", allowBlank: true, formulae: ['"pagado,programado"'] };
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const safeName = (projectName || "proyecto").replace(/[^a-z0-9]+/gi, "-");
+  a.download = `plantilla-pagos-${safeName}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Convierte lo que venga en la celda de fecha (texto, o fecha real de Excel) a "AAAA-MM-DD".
+function normalizeExcelDate(val) {
+  if (!val) return "";
+  if (val instanceof Date) return val.toISOString().slice(0, 10);
+  if (typeof val === "number") {
+    const d = XLSX.SSF.parse_date_code(val);
+    if (!d) return "";
+    return `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+  }
+  const asProject = parseProjectDate(String(val));
+  if (asProject) return asProject;
+  const s = String(val).trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
+}
+
+// Lee el archivo .xlsx que suba la persona y arma la lista de órdenes+pagos (agrupa filas por
+// "Número de orden" — varias filas con el mismo número son varios pagos de la misma orden).
+function parsePagosWorkbook(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  const ordenesMap = new Map();
+  let skipped = 0;
+  rows.forEach((r) => {
+    const numero = String(r["Número de orden"] || "").trim();
+    if (!numero) { skipped++; return; }
+    if (!ordenesMap.has(numero)) {
+      ordenesMap.set(numero, {
+        id: uid(),
+        numero,
+        proveedor: String(r["Proveedor"] || "").trim(),
+        descripcion: String(r["Descripción"] || "").trim(),
+        valorTotal: parseColombianNumber(r["Valor total orden"]) || Number(r["Valor total orden"]) || 0,
+        pagos: [],
+      });
+    }
+    const fecha = normalizeExcelDate(r["Fecha de pago (AAAA-MM-DD)"]);
+    const valorRaw = r["Valor pagado"];
+    if (fecha && valorRaw !== "" && valorRaw !== undefined) {
+      const valor = typeof valorRaw === "number" ? valorRaw : parseColombianNumber(valorRaw);
+      const estadoTexto = String(r["Estado (pagado/programado)"] || "pagado").trim().toLowerCase();
+      ordenesMap.get(numero).pagos.push({
+        id: uid(),
+        fecha,
+        valor,
+        concepto: String(r["Concepto"] || "").trim(),
+        estado: estadoTexto === "programado" ? "programado" : "pagado",
+      });
+    }
+  });
+  return { ordenes: Array.from(ordenesMap.values()), skipped };
+}
+
+function PagosModule({ data, onChange, projectName, presupuestoBase = [] }) {
+  const presupuestoGrupos = groupPresupuestoItems(presupuestoBase);
+  const presupuestoLabel = (id) => {
+    const it = presupuestoBase.find((b) => b.id === id);
+    return it ? `${it.item ? `${it.item} · ` : ""}${it.descripcion}` : "";
+  };
+  const [newOrden, setNewOrden] = useState({ numero: "", proveedor: "", descripcion: "", valorTotal: "", presupuestoItemId: "" });
   const [openId, setOpenId] = useState(null);
   const [newPago, setNewPago] = useState({ fecha: todayISO(), valor: "", concepto: "", estado: "pagado" });
   const [confirmDelete, setConfirmDelete] = useState(null); // { kind: "orden" | "pago", ordenId, pagoId, label } | null
+  const [showTemplateUpload, setShowTemplateUpload] = useState(false);
   const totals = pagosTotals(data);
   const alertas = pagosProximosAlertas(data);
 
@@ -2245,10 +2451,11 @@ function PagosModule({ data, onChange }) {
       proveedor: newOrden.proveedor.trim(),
       descripcion: newOrden.descripcion.trim(),
       valorTotal: Number(newOrden.valorTotal) || 0,
+      presupuestoItemId: newOrden.presupuestoItemId || null,
       pagos: [],
     };
     onChange({ ...data, ordenes: [...data.ordenes, orden] });
-    setNewOrden({ numero: "", proveedor: "", descripcion: "", valorTotal: "" });
+    setNewOrden({ numero: "", proveedor: "", descripcion: "", valorTotal: "", presupuestoItemId: "" });
     setOpenId(orden.id);
   };
   const updateOrden = (id, patch) => {
@@ -2292,6 +2499,19 @@ function PagosModule({ data, onChange }) {
 
   return (
     <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button style={styles.pasteBtn} onClick={() => downloadPagosTemplate(data, projectName)}>
+          <FileDown size={14} /> Descargar plantilla Excel
+        </button>
+        <button style={styles.pasteBtn} onClick={() => setShowTemplateUpload(true)}>
+          <FileUp size={14} /> Cargar plantilla Excel
+        </button>
+      </div>
+
+      {showTemplateUpload && (
+        <PagosTemplateModal onClose={() => setShowTemplateUpload(false)} onImport={(ordenes) => { onChange({ ...data, ordenes }); setShowTemplateUpload(false); }} />
+      )}
+
       <div style={styles.overviewStatRow}>
         <div style={styles.overviewStat}>
           <div style={{ ...styles.overviewStatNum, fontSize: 18 }}>{fmtMoney(totals.totalOrdenes)}</div>
@@ -2359,6 +2579,11 @@ function PagosModule({ data, onChange }) {
                         value={o.descripcion || ""}
                         onChange={(e) => updateOrden(o.id, { descripcion: e.target.value })}
                       />
+                      {o.presupuestoItemId && presupuestoLabel(o.presupuestoItemId) && (
+                        <div style={{ fontSize: 10.5, color: "#7FD08A", marginTop: 3 }}>
+                          → {presupuestoLabel(o.presupuestoItemId)}
+                        </div>
+                      )}
                     </td>
                     <td style={styles.ovTd} onClick={(e) => e.stopPropagation()}>
                       <input
@@ -2376,7 +2601,7 @@ function PagosModule({ data, onChange }) {
                       />
                     </td>
                     <td style={styles.ovTd}>
-                      <OvBar pct={Math.min(100, pct)} color={sobrepasado ? "#E2604F" : saldo === 0 ? "#5FBF8F" : "#F5B942"} />
+                      <OvBar pct={Math.min(100, pct)} label={`${pct}%`} color={sobrepasado ? "#E2604F" : saldo === 0 ? "#5FBF8F" : "#F5B942"} />
                       <div style={{ fontSize: 10.5, color: sobrepasado ? "#E2604F" : "#7A8A93", marginTop: 3, fontFamily: "'JetBrains Mono', monospace", fontWeight: sobrepasado ? 700 : 400 }}>
                         {fmtMoney(pagado)} pagado{programado > 0 ? ` · ${fmtMoney(programado)} programado` : ""} · {sobrepasado ? "excedido en " : "saldo "}{fmtMoney(Math.abs(saldo))}
                       </div>
@@ -2391,6 +2616,25 @@ function PagosModule({ data, onChange }) {
                     <tr>
                       <td colSpan={6} style={{ ...styles.ovTd, background: "#12181C" }}>
                         <div style={{ padding: "6px 4px" }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 12, color: "#B9C4CA" }}>
+                            <span>Ítem de presupuesto (opcional):</span>
+                            <select
+                              style={styles.miniInput}
+                              value={o.presupuestoItemId || ""}
+                              onChange={(e) => updateOrden(o.id, { presupuestoItemId: e.target.value || null })}
+                            >
+                              <option value="">Sin vincular</option>
+                              {presupuestoGrupos.map((g) => (
+                                <optgroup key={g.categoria} label={g.categoria}>
+                                  {g.items.map((it) => (
+                                    <option key={it.id} value={it.id}>
+                                      {it.item ? `${it.item} · ` : ""}{it.descripcion}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                            </select>
+                          </label>
                           <table style={styles.overviewTable}>
                             <thead>
                               <tr>
@@ -2481,6 +2725,22 @@ function PagosModule({ data, onChange }) {
               </td>
               <td style={styles.ovTd}>
                 <input style={styles.miniInput} placeholder="Concepto de la orden" value={newOrden.descripcion} onChange={(e) => setNewOrden({ ...newOrden, descripcion: e.target.value })} />
+                <select
+                  style={{ ...styles.miniInput, marginTop: 4, fontSize: 11 }}
+                  value={newOrden.presupuestoItemId}
+                  onChange={(e) => setNewOrden({ ...newOrden, presupuestoItemId: e.target.value })}
+                >
+                  <option value="">Ítem de presupuesto (opcional)</option>
+                  {presupuestoGrupos.map((g) => (
+                    <optgroup key={g.categoria} label={g.categoria}>
+                      {g.items.map((it) => (
+                        <option key={it.id} value={it.id}>
+                          {it.item ? `${it.item} · ` : ""}{it.descripcion}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
               </td>
               <td style={styles.ovTd}>
                 <input style={styles.miniInput} placeholder="Proveedor" value={newOrden.proveedor} onChange={(e) => setNewOrden({ ...newOrden, proveedor: e.target.value })} />
@@ -2506,6 +2766,73 @@ function PagosModule({ data, onChange }) {
           onConfirm={runConfirmedDelete}
         />
       )}
+    </div>
+  );
+}
+
+// Sube el archivo .xlsx lleno y muestra cuántas órdenes/pagos trae antes de aplicar — reemplaza
+// TODA la lista de órdenes de este proyecto por lo que traiga el archivo (por eso el aviso).
+function PagosTemplateModal({ onClose, onImport }) {
+  const fileInputRef = useRef(null);
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState(null); // { ordenes, skipped, totalPagos } | null
+  const [error, setError] = useState("");
+
+  const handleFile = async (file) => {
+    setFileName(file.name);
+    setError("");
+    setPreview(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const { ordenes, skipped } = parsePagosWorkbook(buf);
+      const totalPagos = ordenes.reduce((s, o) => s + o.pagos.length, 0);
+      setPreview({ ordenes, skipped, totalPagos });
+    } catch {
+      setError("No se pudo leer ese archivo. ¿Es un .xlsx válido?");
+    }
+  };
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.exportModal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Cargar plantilla de pagos</h3>
+          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+        </div>
+        <p style={styles.exportHint}>
+          Sube el archivo .xlsx que descargaste y llenaste. Esto <strong>reemplaza todas las órdenes de servicio</strong> de
+          este proyecto por lo que traiga el archivo — descarga la plantilla actual primero si no quieres perder nada.
+        </p>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".xlsx,.xls"
+          style={{ display: "none" }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+        />
+        <button style={{ ...styles.addProjectBtn, marginTop: 4 }} onClick={() => fileInputRef.current?.click()}>
+          {fileName || "Elegir archivo…"}
+        </button>
+        {error && <div style={styles.importError}>{error}</div>}
+        {preview && (
+          <>
+            <div style={styles.pastePreview}>
+              Se detectaron <strong>{preview.ordenes.length}</strong> órdenes con <strong>{preview.totalPagos}</strong> pagos en total.
+              {preview.skipped > 0 && <> Se ignoraron {preview.skipped} filas sin número de orden.</>}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={styles.confirmCancelBtn} onClick={() => { setPreview(null); setFileName(""); }}>Elegir otro archivo</button>
+              <button
+                style={{ ...styles.addProjectBtn, opacity: preview.ordenes.length ? 1 : 0.5 }}
+                disabled={!preview.ordenes.length}
+                onClick={() => onImport(preview.ordenes)}
+              >
+                Reemplazar con {preview.ordenes.length} órdenes
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -2932,7 +3259,7 @@ function PrintResumenProject({ project, data }) {
   const upmePct = upmeProgress(data.upme);
   const enerPct = energizacionProgress(data.energizacion);
   const nextMs = nextEnergizacionMilestone(data.energizacion);
-  const elapsed = daysBetween(data.energizacion.fechaInicio, todayISO());
+  const elapsed = data.energizacion.fechaInicio ? daysBetween(data.energizacion.fechaInicio, todayISO()) : null;
   const presTotals = presupuestoTotals(data.presupuesto);
   const desviacionPct = presTotals.base ? Math.round((presTotals.diferencia / presTotals.base) * 100) : 0;
   const pagTotals = pagosTotals(data.pagos);
@@ -2958,7 +3285,7 @@ function PrintResumenProject({ project, data }) {
           <div style={prCard.card}>
             <PrCardHead color="#F5B942">Energización</PrCardHead>
             <PrBigPct pct={enerPct} color="#C98A1E" />
-            <div style={prCard.cardSub}>Día {elapsed} de 200 · {nextMs ? `Siguiente: ${nextMs.title} (día ${nextMs.day})` : "Completado"}</div>
+            <div style={prCard.cardSub}>{elapsed === null ? "Falta asignar fecha de inicio de trámites" : `Día ${elapsed} de 200`} · {nextMs ? `Siguiente: ${nextMs.title} (día ${nextMs.day})` : "Completado"}</div>
           </div>
           <div style={prCard.card}>
             <PrCardHead color="#7FD08A">Presupuesto</PrCardHead>

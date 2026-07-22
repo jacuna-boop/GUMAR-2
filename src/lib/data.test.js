@@ -14,6 +14,8 @@ import {
   buildPresupuestoBaseFromTemplate,
   buildCronogramaBaseFromTemplate,
   ensureFullProjectData,
+  emptyEnergizacionState,
+  nextEnergizacionMilestone,
   uid,
 } from "./data.js";
 
@@ -288,5 +290,23 @@ describe("ensureFullProjectData (no debe romper con datos viejos/corruptos)", ()
   it("acepta un objeto totalmente vacío ('{}'::jsonb de Postgres) sin lanzar error", () => {
     expect(() => ensureFullProjectData({})).not.toThrow();
     expect(() => ensureFullProjectData(null)).not.toThrow();
+  });
+});
+
+describe("energización sin fecha de inicio no debe marcar atraso (regresión)", () => {
+  it("un proyecto nuevo arranca sin fecha de inicio de energización", () => {
+    expect(emptyEnergizacionState().fechaInicio).toBe("");
+  });
+
+  it("sin fecha de inicio, el siguiente hito nunca sale atrasado", () => {
+    const ener = emptyEnergizacionState();
+    const next = nextEnergizacionMilestone(ener);
+    expect(next.delayed).toBe(false);
+  });
+
+  it("una vez asignada la fecha, sí puede marcar atraso si el día ya pasó", () => {
+    const ener = { ...emptyEnergizacionState(), fechaInicio: "2000-01-01" }; // muy en el pasado
+    const next = nextEnergizacionMilestone(ener);
+    expect(next.delayed).toBe(true);
   });
 });

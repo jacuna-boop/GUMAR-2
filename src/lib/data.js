@@ -494,7 +494,10 @@ function emptyUpmeState() {
 
 function emptyEnergizacionState() {
   return {
-    fechaInicio: todayISO(),
+    // Vacío a propósito: si se pusiera hoy por defecto, un proyecto recién creado ya "estaría
+    // atrasado" el mismo día que se crea, antes de que nadie haya arrancado nada de verdad. Las
+    // alertas de atraso solo empiezan cuando la persona asigna la fecha real de inicio de trámites.
+    fechaInicio: "",
     milestones: ENERGIZACION_MILESTONES.map(() => ({ done: false, fecha: "" })),
   };
 }
@@ -1269,7 +1272,6 @@ function energizacionProgress(ener) {
   return ENERGIZACION_TOTAL_COST ? Math.round((doneCost / ENERGIZACION_TOTAL_COST) * 100) : 0;
 }
 function nextEnergizacionMilestone(ener) {
-  const elapsed = daysBetween(ener.fechaInicio, todayISO());
   let best = null;
   ENERGIZACION_MILESTONES.forEach((m, i) => {
     if (!ener.milestones[i]?.done) {
@@ -1277,6 +1279,9 @@ function nextEnergizacionMilestone(ener) {
     }
   });
   if (!best) return null;
+  // Sin fecha de inicio todavía no hay "atraso" que avisar — apenas se asigne, empieza a contar.
+  if (!ener.fechaInicio) return { ...best, delayed: false };
+  const elapsed = daysBetween(ener.fechaInicio, todayISO());
   return { ...best, delayed: elapsed > best.day };
 }
 
