@@ -19,7 +19,7 @@ import {
   emptyProjectData, ensureFullProjectData, buildPresupuestoBaseFromTemplate, buildCronogramaBaseFromTemplate,
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData,
   parseCronogramaPaste, cronogramaAvanceActual, matchCronogramaTasks, applyCronogramaMerge,
-  parsePredecesoras, computeCronogramaSchedule,
+  parsePredecesoras, computeCronogramaSchedule, parseProjectDate,
   upmeProgress, upmeActiveSteps, upmeNextStep, energizacionProgress, nextEnergizacionMilestone,
   presupuestoTotals, presupuestoListTotal, groupPresupuestoItems, calcPresupuestoItem, parsePresupuestoPaste,
   parseColombianNumber,
@@ -2791,8 +2791,9 @@ function PagosTemplateModal({ onClose, onImport }) {
       const { ordenes, skipped } = parsePagosWorkbook(buf);
       const totalPagos = ordenes.reduce((s, o) => s + o.pagos.length, 0);
       setPreview({ ordenes, skipped, totalPagos });
-    } catch {
-      setError("No se pudo leer ese archivo. ¿Es un .xlsx válido?");
+    } catch (err) {
+      console.error("Error leyendo plantilla de pagos:", err);
+      setError(`No se pudo leer ese archivo. ¿Es un .xlsx válido? (${err?.message || "error desconocido"})`);
     }
   };
 
