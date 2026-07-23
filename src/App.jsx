@@ -578,7 +578,7 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
         <img src={gumarLogo} alt="Gumar Proyectos" style={styles.brandLogo} />
         <div>
           <div style={styles.brandTitle}>Control de Parques</div>
-          <div style={styles.brandSub}>UPME · Energización</div>
+          <div style={styles.brandTitle}>GUMAR PROYECTOS</div>
         </div>
       </div>
 
