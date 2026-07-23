@@ -2396,7 +2396,10 @@ function normalizeExcelDate(val) {
 // "Número de orden" — varias filas con el mismo número son varios pagos de la misma orden).
 function parsePagosWorkbook(arrayBuffer) {
   const wb = XLSX.read(arrayBuffer, { cellDates: true });
-  const ws = wb.Sheets[wb.SheetNames[0]];
+  // La plantilla trae la hoja "Instrucciones" primero y "Pagos" después — hay que buscarla por
+  // nombre, no asumir que es la primera hoja del archivo.
+  const sheetName = wb.SheetNames.includes("Pagos") ? "Pagos" : wb.SheetNames[wb.SheetNames.length - 1];
+  const ws = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
   const ordenesMap = new Map();
   let skipped = 0;
