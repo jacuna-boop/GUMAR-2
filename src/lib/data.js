@@ -633,12 +633,13 @@ function pagosProximosAlertas(pagos, diasAviso = 7) {
     (o.pagos || []).forEach((p) => {
       if (p.estado !== "programado" || !p.fecha) return;
       const dias = daysBetween(hoy, p.fecha);
+      const proveedor = o.proveedor ? ` · ${o.proveedor}` : "";
       const concepto = p.concepto ? ` (${p.concepto})` : "";
       if (dias < 0) {
-        alertas.push({ tipo: "vencido", texto: `Pago programado vencido: ${o.numero}${concepto} — ${fmtMoney(p.valor)}, previsto para el ${fmtDate(p.fecha)}.` });
+        alertas.push({ tipo: "vencido", texto: `Pago programado vencido: ${o.numero}${proveedor}${concepto} — ${fmtMoney(p.valor)}, previsto para el ${fmtDate(p.fecha)}.` });
       } else if (dias <= diasAviso) {
         const cuando = dias === 0 ? "hoy" : `en ${dias} día${dias === 1 ? "" : "s"}`;
-        alertas.push({ tipo: "proximo", texto: `Pago próximo: ${o.numero}${concepto} — ${fmtMoney(p.valor)}, vence ${cuando} (${fmtDate(p.fecha)}).` });
+        alertas.push({ tipo: "proximo", texto: `Pago próximo: ${o.numero}${proveedor}${concepto} — ${fmtMoney(p.valor)}, vence ${cuando} (${fmtDate(p.fecha)}).` });
       }
     });
   });
