@@ -11,6 +11,7 @@ import { supabase } from "./lib/supabaseClient";
 import { COLOMBIA_LOCATIONS } from "./lib/colombiaLocations";
 import Login from "./components/Login";
 import CronogramaGantt from "./components/CronogramaGantt";
+import gumarLogo from "./assets/gumar-logo.jpg";
 import {
   UPME_STEPS, ENERGIZACION_GROUPS, ENERGIZACION_MILESTONES, ENERGIZACION_TOTAL_COST,
   CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, fmtDate, fmtTime, fmtDateTime,
@@ -574,7 +575,7 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
   return (
     <aside className="app-sidebar" style={styles.sidebar}>
       <div style={styles.brand}>
-        <Sun size={20} color="#F5B942" />
+        <img src={gumarLogo} alt="Gumar Proyectos" style={styles.brandLogo} />
         <div>
           <div style={styles.brandTitle}>Control de Parques</div>
           <div style={styles.brandSub}>UPME · Energización</div>
@@ -3715,6 +3716,7 @@ const styles = {
     overflowY: "auto",
   },
   brand: { display: "flex", alignItems: "center", gap: 10, padding: "4px 4px 8px" },
+  brandLogo: { width: 34, height: 34, borderRadius: 8, objectFit: "cover", flexShrink: 0 },
   brandTitle: { fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 15, letterSpacing: 0.2 },
   brandSub: { fontSize: 11, color: "#7A8A93", marginTop: 1 },
   addProjectBtn: {
