@@ -963,13 +963,13 @@ function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExpo
       </div>
       <div style={styles.headerRight}>
         <div style={styles.tabs}>
+          <TabBtn active={tab === "balance"} onClick={() => setTab("balance")} icon={<Landmark size={14} />} label="Balance financiero" />
           <TabBtn active={tab === "resumen"} onClick={() => setTab("resumen")} icon={<MapPin size={14} />} label="Resumen" />
           <TabBtn active={tab === "upme"} onClick={() => setTab("upme")} icon={<FileCheck size={14} />} label="UPME" />
           <TabBtn active={tab === "energizacion"} onClick={() => setTab("energizacion")} icon={<Zap size={14} />} label="Energización" />
           <TabBtn active={tab === "cronograma"} onClick={() => setTab("cronograma")} icon={<Calendar size={14} />} label="Cronograma" />
           <TabBtn active={tab === "presupuesto"} onClick={() => setTab("presupuesto")} icon={<DollarSign size={14} />} label="Presupuesto" />
           <TabBtn active={tab === "pagos"} onClick={() => setTab("pagos")} icon={<Wallet size={14} />} label="Pagos" />
-          <TabBtn active={tab === "balance"} onClick={() => setTab("balance")} icon={<Landmark size={14} />} label="Balance financiero" />
         </div>
         <div style={styles.headerActions}>
           <SaveIndicator status={saveStatus} lastSaved={lastSaved} onSaveNow={onSaveNow} />
@@ -1053,6 +1053,23 @@ function Resumen({ data, setTab }) {
       <div
         style={{ ...styles.card, ...styles.cardClickable }}
         role="button"
+        onClick={() => setTab?.("balance")}
+      >
+        <div style={styles.cardHead}>
+          <Landmark size={16} color="#A78BFA" />
+          <span>Balance financiero</span>
+        </div>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 24, fontWeight: 700, color: balTotals.saldo >= 0 ? "#7FD08A" : "#E2604F" }}>
+          {fmtMoney(balTotals.saldo)}
+        </div>
+        <div style={styles.cardSub}>
+          Ingresos {fmtMoney(balTotals.totalIngresos)} · Pagos {fmtMoney(balTotals.totalPagos)}
+        </div>
+      </div>
+
+      <div
+        style={{ ...styles.card, ...styles.cardClickable }}
+        role="button"
         onClick={() => setTab?.("upme")}
       >
         <div style={styles.cardHead}>
@@ -1111,23 +1128,6 @@ function Resumen({ data, setTab }) {
         <BigPct pct={pagTotals.totalOrdenes ? Math.round((pagTotals.totalPagado / pagTotals.totalOrdenes) * 100) : 0} color="#E77DA8" />
         <div style={styles.cardSub}>
           {fmtMoney(pagTotals.totalPagado)} pagado de {fmtMoney(pagTotals.totalOrdenes)} · saldo {fmtMoney(pagTotals.totalSaldo)}
-        </div>
-      </div>
-
-      <div
-        style={{ ...styles.card, ...styles.cardClickable }}
-        role="button"
-        onClick={() => setTab?.("balance")}
-      >
-        <div style={styles.cardHead}>
-          <Landmark size={16} color="#A78BFA" />
-          <span>Balance financiero</span>
-        </div>
-        <div style={{ fontFamily: FONT_MONO, fontSize: 24, fontWeight: 700, color: balTotals.saldo >= 0 ? "#7FD08A" : "#E2604F" }}>
-          {fmtMoney(balTotals.saldo)}
-        </div>
-        <div style={styles.cardSub}>
-          Ingresos {fmtMoney(balTotals.totalIngresos)} · Pagos {fmtMoney(balTotals.totalPagos)}
         </div>
       </div>
 
