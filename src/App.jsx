@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Plus, X, ChevronRight, ChevronDown, Sun, FileCheck, Zap, MapPin, Calendar,
   AlertTriangle, CheckCircle2, Circle, Trash2, Loader2, FileDown, Save,
-  LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste, Clock, Paperclip, FileUp,
+  LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste, Clock, Paperclip, FileUp, Users,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar } from "recharts";
 import * as XLSX from "xlsx";
@@ -65,6 +65,7 @@ function Dashboard({ session }) {
   const [lastSaved, setLastSaved] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null); // { id, name } | null
   const [editingProject, setEditingProject] = useState(null); // project object | null
+  const [managingMembers, setManagingMembers] = useState(null); // project object | null
   const [showImportText, setShowImportText] = useState(false);
   const [view, setView] = useState("overview"); // "overview" | "project"
   const [printTarget, setPrintTarget] = useState(null); // null | "project" | "general" | "tab"
@@ -409,6 +410,7 @@ function Dashboard({ session }) {
           onAdd={() => setShowAddProject(true)}
           onDelete={(p) => setDeleteTarget({ id: p.id, name: p.name })}
           onEditProject={(p) => setEditingProject(p)}
+          onManageMembers={(p) => setManagingMembers(p)}
           projectData={projectData}
           onExport={exportData}
           onImportFile={importData}
@@ -545,6 +547,9 @@ function Dashboard({ session }) {
           }}
         />
       )}
+      {managingMembers && (
+        <ProjectMembersModal project={managingMembers} onClose={() => setManagingMembers(null)} />
+      )}
       {deleteTarget && (
         <ConfirmModal
           title="Eliminar proyecto"
@@ -569,7 +574,7 @@ function Dashboard({ session }) {
   );
 }
 
-function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, onEditProject, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut, isAdmin, isLector }) {
+function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, onEditProject, onManageMembers, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut, isAdmin, isLector }) {
   const fileInputRef = React.useRef(null);
 
   return (
@@ -634,6 +639,18 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
                   {isAdmin && (
                     <button
                       style={styles.deleteBtn}
+                      title="Gestionar acceso"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onManageMembers(p);
+                      }}
+                    >
+                      <Users size={13} />
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      style={styles.deleteBtn}
                       onClick={(e) => {
                         e.stopPropagation();
                         onDelete(p);
@@ -658,7 +675,7 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
 
       <div style={styles.sidebarFooter}>
         <div style={styles.sharedNote}>
-          Conectado como <strong>{userEmail}</strong> — todos los usuarios de este equipo ven y editan los mismos datos.
+          Conectado como <strong>{userEmail}</strong> — solo ves los proyectos a los que te dieron acceso.
         </div>
         <div style={styles.footerBtnRow}>
           <button style={styles.footerBtn} onClick={onExport}>
@@ -3028,6 +3045,93 @@ function ExportPdfModal({ tab, onClose, onChoose }) {
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal de admin: marca qué personas pueden ver/editar este proyecto. Los admins siempre tienen
+// acceso a todo (no aparecen como editables aquí, se muestran ya marcados y bloqueados).
+function ProjectMembersModal({ project, onClose }) {
+  const [profiles, setProfiles] = useState([]);
+  const [memberIds, setMemberIds] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const [{ data: profs }, { data: members, error: membersError }] = await Promise.all([
+        supabase.from("profiles").select("id, email, full_name, role").order("email"),
+        supabase.from("project_members").select("user_id").eq("project_id", project.id),
+      ]);
+      if (membersError) setError("No se pudo cargar quién tiene acceso. Intenta de nuevo.");
+      setProfiles(profs || []);
+      setMemberIds(new Set((members || []).map((m) => m.user_id)));
+      setLoading(false);
+    })();
+  }, [project.id]);
+
+  const toggle = async (userId, checked) => {
+    setBusyId(userId);
+    setError("");
+    if (checked) {
+      const { error: err } = await supabase.from("project_members").insert({ project_id: project.id, user_id: userId });
+      if (err) setError("No se pudo dar acceso. Intenta de nuevo.");
+      else setMemberIds((prev) => new Set(prev).add(userId));
+    } else {
+      const { error: err } = await supabase.from("project_members").delete().eq("project_id", project.id).eq("user_id", userId);
+      if (err) setError("No se pudo quitar el acceso. Intenta de nuevo.");
+      else setMemberIds((prev) => { const next = new Set(prev); next.delete(userId); return next; });
+    }
+    setBusyId(null);
+  };
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Acceso a "{project.name}"</h3>
+          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+        </div>
+        <p style={styles.confirmMsg}>
+          Marca quién puede ver y editar este proyecto. Los administradores siempre tienen acceso a
+          todos los proyectos, sin importar esta lista.
+        </p>
+        {error && <div style={styles.importError}>{error}</div>}
+        {loading ? (
+          <div style={{ padding: "16px 0", color: "#7A8A93", fontSize: 13 }}>Cargando…</div>
+        ) : profiles.length === 0 ? (
+          <div style={{ padding: "16px 0", color: "#7A8A93", fontSize: 13 }}>No hay usuarios registrados todavía.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 320, overflowY: "auto", marginTop: 8 }}>
+            {profiles.map((p) => {
+              const isProfAdmin = p.role === "admin";
+              return (
+                <label
+                  key={p.id}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
+                    borderRadius: 8, background: "#1C242A", opacity: busyId === p.id ? 0.6 : 1,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isProfAdmin || memberIds.has(p.id)}
+                    disabled={isProfAdmin || busyId === p.id}
+                    onChange={(e) => toggle(p.id, e.target.checked)}
+                  />
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    <span style={{ fontSize: 13, color: "#E8EDEF" }}>{p.full_name || p.email}</span>
+                    <span style={{ fontSize: 11, color: "#7A8A93" }}>
+                      {p.email}{isProfAdmin ? " · admin (acceso a todo)" : ""}
+                    </span>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -46,17 +46,6 @@ create table if not exists project_history (
 create index if not exists project_history_project_id_created_at_idx
   on project_history (project_id, created_at desc);
 
-alter table project_history enable row level security;
-drop policy if exists "authenticated read project_history" on project_history;
-drop policy if exists "editor insert project_history" on project_history;
-drop policy if exists "editor update project_history" on project_history;
-create policy "authenticated read project_history" on project_history
-  for select using (auth.role() = 'authenticated');
-create policy "editor insert project_history" on project_history
-  for insert with check (exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor')));
-create policy "editor update project_history" on project_history
-  for update using (exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor')));
-
 -- Perfil simple para mostrar nombre de quien hizo cada cambio (opcional), y el rol de permisos
 -- de cada persona: admin (puede borrar proyectos), editor (puede editar todo menos borrar
 -- proyectos), lector (solo puede ver y exportar).
@@ -87,14 +76,61 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
+-- Quién tiene acceso a qué proyecto: admin ve todo siempre (no necesita fila aquí); editor/lector
+-- solo ven los proyectos donde el admin los haya agregado explícitamente desde el botón de
+-- "personas" en el sidebar.
+create table if not exists project_members (
+  project_id uuid not null references projects(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz default now(),
+  primary key (project_id, user_id)
+);
+
+-- security definer: puede leer profiles/project_members saltándose RLS — evita que la política
+-- de una tabla dependa de leer otra tabla que a su vez está protegida por RLS (candado circular).
+create or replace function public.is_admin()
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+$$;
+
+create or replace function public.can_access_project(pid uuid)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_admin() or exists (
+    select 1 from project_members where project_id = pid and user_id = auth.uid()
+  )
+$$;
+
+grant execute on function public.is_admin() to authenticated;
+grant execute on function public.can_access_project(uuid) to authenticated;
+
+-- Agrega automáticamente al creador de un proyecto como miembro (si no, no vería lo que creó).
+create or replace function public.handle_new_project()
+returns trigger as $$
+begin
+  if new.created_by is not null then
+    insert into public.project_members (project_id, user_id) values (new.id, new.created_by)
+    on conflict do nothing;
+  end if;
+  return new;
+end;
+$$ language plpgsql security definer;
+
+drop trigger if exists on_project_created on projects;
+create trigger on_project_created
+  after insert on projects
+  for each row execute procedure public.handle_new_project();
+
 -- =========================================================
--- Row Level Security: cualquier usuario autenticado puede VER todos los
--- proyectos. Para escribir se exige rol admin/editor, y para borrar
--- proyectos se exige admin — ver "role" en profiles arriba.
+-- Row Level Security: admin ve y edita TODO. editor/lector solo ven (y editor solo puede
+-- editar) los proyectos donde estén agregados como miembros — ver project_members arriba.
 -- =========================================================
 alter table projects enable row level security;
 alter table project_data enable row level security;
 alter table profiles enable row level security;
+alter table project_history enable row level security;
+alter table project_members enable row level security;
 
 drop policy if exists "authenticated insert projects" on projects;
 drop policy if exists "authenticated update projects" on projects;
@@ -102,39 +138,71 @@ drop policy if exists "authenticated delete projects" on projects;
 drop policy if exists "authenticated insert project_data" on project_data;
 drop policy if exists "authenticated update project_data" on project_data;
 drop policy if exists "authenticated delete project_data" on project_data;
+drop policy if exists "authenticated read projects" on projects;
+drop policy if exists "member or admin read projects" on projects;
+drop policy if exists "editor update projects" on projects;
+drop policy if exists "member editor update projects" on projects;
+drop policy if exists "authenticated read project_data" on project_data;
+drop policy if exists "member or admin read project_data" on project_data;
+drop policy if exists "editor insert project_data" on project_data;
+drop policy if exists "member editor insert project_data" on project_data;
+drop policy if exists "editor update project_data" on project_data;
+drop policy if exists "member editor update project_data" on project_data;
+drop policy if exists "authenticated read project_history" on project_history;
+drop policy if exists "member or admin read project_history" on project_history;
+drop policy if exists "editor insert project_history" on project_history;
+drop policy if exists "member editor insert project_history" on project_history;
+drop policy if exists "editor update project_history" on project_history;
+drop policy if exists "member editor update project_history" on project_history;
+drop policy if exists "admin manage project_members" on project_members;
 
-create policy "authenticated read projects" on projects
-  for select using (auth.role() = 'authenticated');
+create policy "member or admin read projects" on projects
+  for select using (public.can_access_project(id));
 create policy "editor insert projects" on projects
   for insert with check (
     exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
   );
-create policy "editor update projects" on projects
+create policy "member editor update projects" on projects
   for update using (
     exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+    and public.can_access_project(id)
   );
 create policy "admin delete projects" on projects
-  for delete using (
-    exists (select 1 from profiles where id = auth.uid() and role = 'admin')
-  );
+  for delete using (public.is_admin());
 
-create policy "authenticated read project_data" on project_data
-  for select using (auth.role() = 'authenticated');
-create policy "editor insert project_data" on project_data
+create policy "member or admin read project_data" on project_data
+  for select using (public.can_access_project(project_id));
+create policy "member editor insert project_data" on project_data
   for insert with check (
     exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+    and public.can_access_project(project_id)
   );
-create policy "editor update project_data" on project_data
+create policy "member editor update project_data" on project_data
   for update using (
     exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+    and public.can_access_project(project_id)
   );
 create policy "admin delete project_data" on project_data
-  for delete using (
-    exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+  for delete using (public.is_admin());
+
+create policy "member or admin read project_history" on project_history
+  for select using (public.can_access_project(project_id));
+create policy "member editor insert project_history" on project_history
+  for insert with check (
+    exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+    and public.can_access_project(project_id)
+  );
+create policy "member editor update project_history" on project_history
+  for update using (
+    exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+    and public.can_access_project(project_id)
   );
 
 create policy "authenticated read profiles" on profiles
   for select using (auth.role() = 'authenticated');
+
+create policy "admin manage project_members" on project_members
+  for all using (public.is_admin()) with check (public.is_admin());
 
 -- =========================================================
 -- Realtime: permite que los cambios de un compañero aparezcan
@@ -168,27 +236,46 @@ create index if not exists attachments_project_modulo_entidad_idx
 
 alter table attachments enable row level security;
 drop policy if exists "authenticated read attachments" on attachments;
+drop policy if exists "member or admin read attachments" on attachments;
 drop policy if exists "editor insert attachments" on attachments;
+drop policy if exists "member editor insert attachments" on attachments;
 drop policy if exists "editor delete attachments" on attachments;
-create policy "authenticated read attachments" on attachments
-  for select using (auth.role() = 'authenticated');
-create policy "editor insert attachments" on attachments
-  for insert with check (exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor')));
-create policy "editor delete attachments" on attachments
-  for delete using (exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor')));
+drop policy if exists "member editor delete attachments" on attachments;
+create policy "member or admin read attachments" on attachments
+  for select using (public.can_access_project(project_id));
+create policy "member editor insert attachments" on attachments
+  for insert with check (
+    exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+    and public.can_access_project(project_id)
+  );
+create policy "member editor delete attachments" on attachments
+  for delete using (
+    exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+    and public.can_access_project(project_id)
+  );
 
+-- La ruta de cada archivo guarda el project_id como primer segmento
+-- ("<projectId>/<modulo>/<entidadId>/archivo.pdf"), así que se valida desde ahí.
 drop policy if exists "authenticated read project files" on storage.objects;
+drop policy if exists "member or admin read project files" on storage.objects;
 drop policy if exists "editor upload project files" on storage.objects;
+drop policy if exists "member editor upload project files" on storage.objects;
 drop policy if exists "editor delete project files" on storage.objects;
-create policy "authenticated read project files" on storage.objects
-  for select using (bucket_id = 'project-files' and auth.role() = 'authenticated');
-create policy "editor upload project files" on storage.objects
+drop policy if exists "member editor delete project files" on storage.objects;
+create policy "member or admin read project files" on storage.objects
+  for select using (
+    bucket_id = 'project-files'
+    and public.can_access_project(((storage.foldername(name))[1])::uuid)
+  );
+create policy "member editor upload project files" on storage.objects
   for insert with check (
     bucket_id = 'project-files'
     and exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+    and public.can_access_project(((storage.foldername(name))[1])::uuid)
   );
-create policy "editor delete project files" on storage.objects
+create policy "member editor delete project files" on storage.objects
   for delete using (
     bucket_id = 'project-files'
     and exists (select 1 from profiles where id = auth.uid() and role in ('admin', 'editor'))
+    and public.can_access_project(((storage.foldername(name))[1])::uuid)
   );
