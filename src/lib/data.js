@@ -526,6 +526,18 @@ function emptyPagosState() {
   };
 }
 
+// Balance financiero del proyecto: hitos de pago esperados del cliente. Cada hito trae su fecha y
+// valor esperado; cuando el cliente consigna, se marca "pagado" y se registra la fecha/valor real
+// (pueden diferir de lo esperado) — de ahí sale la lista de "ingresos" reales, sin necesidad de una
+// lista aparte. "valorVentaCliente" es el valor de venta acordado con el cliente (el contrato) —
+// se digita a mano porque no existe en ningún otro módulo.
+function emptyBalanceState() {
+  return {
+    hitos: [], // { id, nombre, fechaProgramada, valorEsperado, pagado, fechaPago, valorPagado }
+    valorVentaCliente: 0,
+  };
+}
+
 function emptyProjectData() {
   return {
     upme: emptyUpmeState(),
@@ -533,6 +545,7 @@ function emptyProjectData() {
     cronograma: emptyCronogramaState(),
     presupuesto: emptyPresupuestoState(),
     pagos: emptyPagosState(),
+    balance: emptyBalanceState(),
   };
 }
 
@@ -548,6 +561,11 @@ function ensureFullProjectData(data) {
   const rawPagos = data?.pagos;
   const pagos = rawPagos && Array.isArray(rawPagos.ordenes) ? { ordenes: rawPagos.ordenes } : emptyPagosState();
 
+  const rawBalance = data?.balance;
+  const balance = rawBalance && Array.isArray(rawBalance.hitos)
+    ? { hitos: rawBalance.hitos, valorVentaCliente: Number(rawBalance.valorVentaCliente) || 0 }
+    : emptyBalanceState();
+
   const rawCronograma = data?.cronograma;
   const cronograma =
     rawCronograma && Array.isArray(rawCronograma.tasks)
@@ -560,7 +578,77 @@ function ensureFullProjectData(data) {
   const rawEner = data?.energizacion;
   const energizacion = rawEner && Array.isArray(rawEner.milestones) ? rawEner : emptyEnergizacionState();
 
-  return { upme, energizacion, cronograma, presupuesto, pagos };
+  return { upme, energizacion, cronograma, presupuesto, pagos, balance };
+}
+
+// Totales del balance financiero: ingresos reales (hitos ya pagados), plata que sale (pagos
+// realmente pagados a proveedores) y cuánto queda.
+function balanceTotals(balance, pagos) {
+  const hitos = balance?.hitos || [];
+  const totalIngresos = hitos.reduce((s, h) => s + (h.pagado ? Number(h.valorPagado) || 0 : 0), 0);
+  const totalEsperado = hitos.reduce((s, h) => s + (Number(h.valorEsperado) || 0), 0);
+  const totalPagos = pagosTotals(pagos).totalPagado;
+  const saldo = totalIngresos - totalPagos;
+  return { totalIngresos, totalEsperado, totalPagos, saldo };
+}
+
+// Valor del proyecto: cuánto se le vendió al cliente vs. cuánto costaba en el papel (presupuesto
+// base) vs. cuánto está costando en la realidad (presupuesto ejecución) — de ahí sale la utilidad
+// estimada (con la base) y la utilidad real (con lo ejecutado hasta ahora).
+function balanceMargenTotals(balance, presupuesto) {
+  const valorVenta = Number(balance?.valorVentaCliente) || 0;
+  const presTotals = presupuestoTotals(presupuesto);
+  const presupuestoBase = presTotals.base;
+  const presupuestoEjecucion = presTotals.ejecutado;
+  const utilidadBase = valorVenta - presupuestoBase;
+  const utilidadReal = valorVenta - presupuestoEjecucion;
+  return { valorVenta, presupuestoBase, presupuestoEjecucion, utilidadBase, utilidadReal };
+}
+
+// Serie acumulada en el tiempo de lo que consigna el cliente (hitos ya pagados) vs. lo que la
+// empresa le paga a sus proveedores (pagos ya pagados) — para graficar una contra la otra.
+function balanceFlujoCaja(balance, pagos) {
+  const ingresoEventos = (balance?.hitos || [])
+    .filter((h) => h.pagado && h.fechaPago)
+    .map((h) => ({ fecha: h.fechaPago, valor: Number(h.valorPagado) || 0 }));
+
+  const pagoEventos = [];
+  (pagos?.ordenes || []).forEach((o) => {
+    (o.pagos || []).forEach((p) => {
+      if ((p.estado || "pagado") === "pagado" && p.fecha) {
+        pagoEventos.push({ fecha: p.fecha, valor: Number(p.valor) || 0 });
+      }
+    });
+  });
+
+  const dateSet = new Set([...ingresoEventos.map((e) => e.fecha), ...pagoEventos.map((e) => e.fecha)]);
+  if (dateSet.size === 0) return [];
+  const sortedDates = Array.from(dateSet).sort();
+
+  let accIngresos = 0;
+  let accPagos = 0;
+  return sortedDates.map((fecha) => {
+    accIngresos += ingresoEventos.filter((e) => e.fecha === fecha).reduce((s, e) => s + e.valor, 0);
+    accPagos += pagoEventos.filter((e) => e.fecha === fecha).reduce((s, e) => s + e.valor, 0);
+    return { fecha, label: fmtDate(fecha), ingresos: Math.round(accIngresos), pagos: Math.round(accPagos) };
+  });
+}
+
+// Alertas de hitos de pago del cliente todavía no pagados: próximos a vencer o ya vencidos.
+function balanceHitosAlertas(balance, diasAviso = 7) {
+  const hoy = todayISO();
+  const alertas = [];
+  (balance?.hitos || []).forEach((h) => {
+    if (h.pagado || !h.fechaProgramada) return;
+    const dias = daysBetween(hoy, h.fechaProgramada);
+    if (dias < 0) {
+      alertas.push({ tipo: "vencido", texto: `Hito de pago del cliente vencido: ${h.nombre || "sin nombre"} — ${fmtMoney(h.valorEsperado)}, previsto para el ${fmtDate(h.fechaProgramada)}.` });
+    } else if (dias <= diasAviso) {
+      const cuando = dias === 0 ? "hoy" : `en ${dias} día${dias === 1 ? "" : "s"}`;
+      alertas.push({ tipo: "proximo", texto: `Hito de pago del cliente próximo: ${h.nombre || "sin nombre"} — ${fmtMoney(h.valorEsperado)}, vence ${cuando} (${fmtDate(h.fechaProgramada)}).` });
+    }
+  });
+  return alertas;
 }
 
 // Calcula valor unitario con IVA, valor total e IVA recuperable de una línea de presupuesto.
@@ -1318,6 +1406,11 @@ export {
   emptyCronogramaState,
   emptyPresupuestoState,
   emptyPagosState,
+  emptyBalanceState,
+  balanceTotals,
+  balanceMargenTotals,
+  balanceFlujoCaja,
+  balanceHitosAlertas,
   emptyProjectData,
   ensureFullProjectData,
   fractionElapsed,

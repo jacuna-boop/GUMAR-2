@@ -24,6 +24,7 @@ create table if not exists project_data (
   cronograma jsonb not null default '{}'::jsonb,
   presupuesto jsonb not null default '{}'::jsonb,
   pagos jsonb not null default '{}'::jsonb,
+  balance jsonb not null default '{}'::jsonb,
   updated_at timestamptz default now(),
   updated_by uuid references auth.users(id)
 );
@@ -31,6 +32,7 @@ create table if not exists project_data (
 -- Si esta tabla ya existía de una instalación anterior, agrega las columnas nuevas sin borrar nada:
 alter table project_data add column if not exists presupuesto jsonb not null default '{}'::jsonb;
 alter table project_data add column if not exists pagos jsonb not null default '{}'::jsonb;
+alter table project_data add column if not exists balance jsonb not null default '{}'::jsonb;
 
 -- Historial de cambios: una foto del proyecto por cada guardado (agrupando guardados seguidos de
 -- la misma persona en una sola fila, ver logProjectHistory en App.jsx) — para ver quién cambió qué

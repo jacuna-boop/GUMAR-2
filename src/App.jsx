@@ -3,8 +3,9 @@ import {
   Plus, X, ChevronRight, ChevronDown, Sun, FileCheck, Zap, MapPin, Calendar,
   AlertTriangle, CheckCircle2, Circle, Trash2, Loader2, FileDown, Save,
   LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste, Clock, Paperclip, FileUp, Users, Link2,
+  Landmark,
 } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar, AreaChart, Area } from "recharts";
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
 import { supabase } from "./lib/supabaseClient";
@@ -16,6 +17,7 @@ import {
   UPME_STEPS, ENERGIZACION_GROUPS, ENERGIZACION_MILESTONES, ENERGIZACION_TOTAL_COST,
   CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, fmtDate, fmtTime, fmtDateTime,
   emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyPresupuestoState, emptyPagosState,
+  emptyBalanceState, balanceTotals, balanceMargenTotals, balanceFlujoCaja, balanceHitosAlertas,
   emptyProjectData, ensureFullProjectData, buildPresupuestoBaseFromTemplate, buildCronogramaBaseFromTemplate,
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData,
   parseCronogramaPaste, cronogramaAvanceActual, matchCronogramaTasks, applyCronogramaMerge,
@@ -104,11 +106,11 @@ function Dashboard({ session }) {
       const { data, error } = await supabase.from("project_data").select("*").eq("project_id", id).maybeSingle();
       if (error) throw error;
       if (data) {
-        setProjectData((prev) => ({ ...prev, [id]: ensureFullProjectData({ upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos }) }));
+        setProjectData((prev) => ({ ...prev, [id]: ensureFullProjectData({ upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos, balance: data.balance }) }));
       } else {
         const fresh = emptyProjectData();
         await supabase.from("project_data").insert({
-          project_id: id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, updated_by: user.id,
+          project_id: id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, balance: fresh.balance, updated_by: user.id,
         });
         setProjectData((prev) => ({ ...prev, [id]: fresh }));
       }
@@ -168,6 +170,7 @@ function Dashboard({ session }) {
         cronograma: data.cronograma,
         presupuesto: data.presupuesto,
         pagos: data.pagos,
+        balance: data.balance,
         updated_at: new Date().toISOString(),
         updated_by: user.id,
       })
@@ -203,7 +206,7 @@ function Dashboard({ session }) {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      const snapshot = { upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos };
+      const snapshot = { upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos, balance: data.balance };
       if (recent && recent.updated_by === user.id && recent.created_at > cutoff) {
         await supabase.from("project_history").update({ data: snapshot, created_at: new Date().toISOString() }).eq("id", recent.id);
       } else {
@@ -281,7 +284,7 @@ function Dashboard({ session }) {
       cronograma: buildCronogramaBaseFromTemplate(),
     };
     await supabase.from("project_data").insert({
-      project_id: newProject.id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, updated_by: user.id,
+      project_id: newProject.id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, balance: fresh.balance, updated_by: user.id,
     });
     setProjectData((prev) => ({ ...prev, [newProject.id]: fresh }));
     setSelectedId(newProject.id);
@@ -497,12 +500,19 @@ function Dashboard({ session }) {
                     onChange={(nextPres) => updateProjectData(selectedId, (cur) => ({ ...cur, presupuesto: nextPres }))}
                     pagos={data.pagos}
                   />
-                ) : (
+                ) : tab === "pagos" ? (
                   <PagosModule
                     data={data.pagos}
                     onChange={(nextPagos) => updateProjectData(selectedId, (cur) => ({ ...cur, pagos: nextPagos }))}
                     projectName={selected.name}
                     presupuestoBase={data.presupuesto.base}
+                  />
+                ) : (
+                  <BalanceModule
+                    data={data.balance}
+                    onChange={(nextBalance) => updateProjectData(selectedId, (cur) => ({ ...cur, balance: nextBalance }))}
+                    pagos={data.pagos}
+                    presupuesto={data.presupuesto}
                   />
                 )}
               </div>
@@ -959,6 +969,7 @@ function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExpo
           <TabBtn active={tab === "cronograma"} onClick={() => setTab("cronograma")} icon={<Calendar size={14} />} label="Cronograma" />
           <TabBtn active={tab === "presupuesto"} onClick={() => setTab("presupuesto")} icon={<DollarSign size={14} />} label="Presupuesto" />
           <TabBtn active={tab === "pagos"} onClick={() => setTab("pagos")} icon={<Wallet size={14} />} label="Pagos" />
+          <TabBtn active={tab === "balance"} onClick={() => setTab("balance")} icon={<Landmark size={14} />} label="Balance financiero" />
         </div>
         <div style={styles.headerActions}>
           <SaveIndicator status={saveStatus} lastSaved={lastSaved} onSaveNow={onSaveNow} />
@@ -1021,6 +1032,7 @@ function buildProjectAlerts(data) {
     alerts.push(`Pagos: hay ${fmtMoney(pagTotals.totalSaldo)} en saldo pendiente por pagar.`);
   }
   pagosProximosAlertas(data.pagos).forEach((a) => alerts.push(a.texto));
+  balanceHitosAlertas(data.balance).forEach((a) => alerts.push(a.texto));
   return alerts;
 }
 
@@ -1032,6 +1044,7 @@ function Resumen({ data, setTab }) {
   const presTotals = presupuestoTotals(data.presupuesto);
   const desviacionPct = presTotals.base ? Math.round((presTotals.diferencia / presTotals.base) * 100) : 0;
   const pagTotals = pagosTotals(data.pagos);
+  const balTotals = balanceTotals(data.balance, data.pagos);
   const nextUpme = upmeNextStep(data.upme);
   const alerts = buildProjectAlerts(data);
 
@@ -1098,6 +1111,23 @@ function Resumen({ data, setTab }) {
         <BigPct pct={pagTotals.totalOrdenes ? Math.round((pagTotals.totalPagado / pagTotals.totalOrdenes) * 100) : 0} color="#E77DA8" />
         <div style={styles.cardSub}>
           {fmtMoney(pagTotals.totalPagado)} pagado de {fmtMoney(pagTotals.totalOrdenes)} · saldo {fmtMoney(pagTotals.totalSaldo)}
+        </div>
+      </div>
+
+      <div
+        style={{ ...styles.card, ...styles.cardClickable }}
+        role="button"
+        onClick={() => setTab?.("balance")}
+      >
+        <div style={styles.cardHead}>
+          <Landmark size={16} color="#A78BFA" />
+          <span>Balance financiero</span>
+        </div>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 24, fontWeight: 700, color: balTotals.saldo >= 0 ? "#7FD08A" : "#E2604F" }}>
+          {fmtMoney(balTotals.saldo)}
+        </div>
+        <div style={styles.cardSub}>
+          Ingresos {fmtMoney(balTotals.totalIngresos)} · Pagos {fmtMoney(balTotals.totalPagos)}
         </div>
       </div>
 
@@ -2906,6 +2936,247 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [] }) {
   );
 }
 
+// Balance financiero: hitos de pago del cliente (con fecha y valor esperado). Al marcar un hito
+// como pagado se registra la fecha/valor real — de ahí sale el total de "ingresos" (no hay una
+// lista de ingresos aparte). "Plata que sale" viene del módulo de Pagos (lo ya pagado a proveedores).
+function BalanceModule({ data, onChange, pagos, presupuesto }) {
+  const [newHito, setNewHito] = useState({ nombre: "", fechaProgramada: "", valorEsperado: "" });
+  const [confirmDelete, setConfirmDelete] = useState(null); // { id, label } | null
+  const totals = balanceTotals(data, pagos);
+  const margen = balanceMargenTotals(data, presupuesto);
+  const alertas = balanceHitosAlertas(data);
+  const flujoData = balanceFlujoCaja(data, pagos);
+  // Barra tipo "bullet": la ejecución real es la barra gruesa, el presupuesto base es una marca de
+  // referencia (el plan) y el valor de venta es la meta — así se ve de un vistazo cuánto margen queda.
+  const margenMaxRef = Math.max(margen.valorVenta, margen.presupuestoBase, margen.presupuestoEjecucion, 1) * 1.05;
+  const margenPct = (v) => Math.min(100, (v / margenMaxRef) * 100);
+  const ejecucionSobreVenta = margen.presupuestoEjecucion > margen.valorVenta;
+
+  const addHito = () => {
+    if (!newHito.nombre.trim()) return;
+    const hito = {
+      id: uid(),
+      nombre: newHito.nombre.trim(),
+      fechaProgramada: newHito.fechaProgramada,
+      valorEsperado: Number(newHito.valorEsperado) || 0,
+      pagado: false,
+      fechaPago: "",
+      valorPagado: 0,
+    };
+    onChange({ ...data, hitos: [...data.hitos, hito] });
+    setNewHito({ nombre: "", fechaProgramada: "", valorEsperado: "" });
+  };
+
+  const updateHito = (id, patch) => {
+    onChange({ ...data, hitos: data.hitos.map((h) => (h.id === id ? { ...h, ...patch } : h)) });
+  };
+
+  const togglePagado = (h, checked) => {
+    updateHito(h.id, checked
+      ? { pagado: true, fechaPago: h.fechaPago || todayISO(), valorPagado: h.valorPagado || h.valorEsperado }
+      : { pagado: false });
+  };
+
+  const deleteHito = (id) => onChange({ ...data, hitos: data.hitos.filter((h) => h.id !== id) });
+
+  return (
+    <div>
+      <div style={styles.chartBox}>
+        <div style={styles.cardHead}><Landmark size={16} color="#A78BFA" /><span>Valor del proyecto</span></div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0 14px" }}>
+          <span style={{ fontSize: 12, color: "#7A8A93" }}>Valor de venta al cliente (contrato):</span>
+          <MoneyInput
+            style={{ ...styles.miniInput, width: 160 }}
+            value={data.valorVentaCliente}
+            onChange={(val) => onChange({ ...data, valorVentaCliente: val })}
+          />
+        </div>
+        <div style={styles.overviewStatRow}>
+          <div style={styles.overviewStat}>
+            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#A78BFA" }}>{fmtMoney(margen.valorVenta)}</div>
+            <div style={styles.overviewStatLabel}>Valor de venta (cliente)</div>
+          </div>
+          <div style={styles.overviewStat}>
+            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#7A8A93" }}>{fmtMoney(margen.presupuestoBase)}</div>
+            <div style={styles.overviewStatLabel}>Valor base (presupuesto base)</div>
+          </div>
+          <div style={styles.overviewStat}>
+            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#7FD08A" }}>{fmtMoney(margen.presupuestoEjecucion)}</div>
+            <div style={styles.overviewStatLabel}>Valor del proyecto (ejecución)</div>
+          </div>
+          <div style={styles.overviewStat}>
+            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: margen.utilidadReal >= 0 ? "#5FBF8F" : "#E2604F" }}>{fmtMoney(margen.utilidadReal)}</div>
+            <div style={styles.overviewStatLabel}>Utilidad real (venta − ejecución)</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "16px 4px 8px" }}>
+          {[
+            { label: "Valor de venta (meta)", value: margen.valorVenta, color: "#A78BFA" },
+            { label: "Presupuesto base (plan)", value: margen.presupuestoBase, color: "#C7D1D6" },
+            { label: "Presupuesto ejecución (real)", value: margen.presupuestoEjecucion, color: ejecucionSobreVenta ? "#E2604F" : "#7FD08A" },
+          ].map((row) => (
+            <div key={row.label}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "#7A8A93", marginBottom: 4 }}>
+                <span>{row.label}</span>
+                <span style={{ fontFamily: FONT_MONO, color: "#E8EDEF" }}>{fmtMoney(row.value)}</span>
+              </div>
+              <div style={{ height: 16, background: "#1C242A", borderRadius: 5 }}>
+                <div style={{ height: "100%", width: `${margenPct(row.value)}%`, background: row.color, borderRadius: 5, transition: "width 0.2s" }} />
+              </div>
+            </div>
+          ))}
+          {ejecucionSobreVenta && (
+            <div style={styles.presExcedidoTag}>
+              La ejecución ya supera el valor de venta en {fmtMoney(margen.presupuestoEjecucion - margen.valorVenta)}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={styles.overviewStatRow}>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#5FBF8F" }}>{fmtMoney(totals.totalIngresos)}</div>
+          <div style={styles.overviewStatLabel}>Ingresos (consignado por el cliente)</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#E77DA8" }}>{fmtMoney(totals.totalPagos)}</div>
+          <div style={styles.overviewStatLabel}>Pagos realizados a proveedores</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.saldo >= 0 ? "#5FBF8F" : "#E2604F" }}>{fmtMoney(totals.saldo)}</div>
+          <div style={styles.overviewStatLabel}>Queda</div>
+        </div>
+        <div style={styles.overviewStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#7A8A93" }}>{fmtMoney(totals.totalEsperado)}</div>
+          <div style={styles.overviewStatLabel}>Total esperado (todos los hitos)</div>
+        </div>
+      </div>
+
+      <div style={styles.chartBox}>
+        <div style={styles.cardHead}><Wallet size={16} color="#4FA8D8" /><span>Pagos del cliente vs. pagos de la empresa (acumulado)</span></div>
+        {flujoData.length === 0 ? (
+          <div style={{ color: "#7A8A93", fontSize: 13, padding: "10px 0 4px" }}>
+            Marca hitos como pagados y registra pagos a proveedores para ver esta gráfica.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={280}>
+            <AreaChart data={flujoData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
+              <defs>
+                <linearGradient id="balFlujoIngresos" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#5FBF8F" stopOpacity={0.5} />
+                  <stop offset="100%" stopColor="#5FBF8F" stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id="balFlujoPagos" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#E77DA8" stopOpacity={0.5} />
+                  <stop offset="100%" stopColor="#E77DA8" stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
+              <XAxis dataKey="label" tick={{ fill: "#7A8A93", fontSize: 10 }} />
+              <YAxis tick={{ fill: "#7A8A93", fontSize: 10 }} tickFormatter={(v) => fmtMoney(v)} width={90} />
+              <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }} />
+              <RLegend wrapperStyle={{ fontSize: 12 }} />
+              <Area type="monotone" dataKey="ingresos" name="Pagos del cliente" stroke="#5FBF8F" strokeWidth={2} fill="url(#balFlujoIngresos)" />
+              <Area type="monotone" dataKey="pagos" name="Pagos de la empresa" stroke="#E77DA8" strokeWidth={2} fill="url(#balFlujoPagos)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {alertas.length > 0 && (
+        <div style={styles.pagosAlertBox}>
+          <div style={styles.cardHead}><AlertTriangle size={16} color="#E8A33D" /><span>Hitos de pago del cliente</span></div>
+          <ul style={styles.alertList}>
+            {alertas.map((a, i) => (
+              <li key={i} style={{ ...styles.alertItem, color: a.tipo === "vencido" ? "#E2604F" : "#E8A33D" }}>{a.texto}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div style={styles.cronoTableWrap}>
+        <table style={styles.overviewTable}>
+          <thead>
+            <tr>
+              <th style={styles.ovTh}>Hito de pago</th>
+              <th style={styles.ovTh}>Fecha programada</th>
+              <th style={styles.ovTh}>Valor esperado</th>
+              <th style={styles.ovTh}>¿Pagado?</th>
+              <th style={styles.ovTh}>Fecha de pago</th>
+              <th style={styles.ovTh}>Valor pagado</th>
+              <th style={styles.ovTh}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.hitos.map((h) => (
+              <tr key={h.id}>
+                <td style={styles.ovTd}>
+                  <input style={styles.miniInput} value={h.nombre} onChange={(e) => updateHito(h.id, { nombre: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <input type="date" style={styles.miniInput} value={h.fechaProgramada || ""} onChange={(e) => updateHito(h.id, { fechaProgramada: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <MoneyInput style={styles.miniInput} value={h.valorEsperado} onChange={(val) => updateHito(h.id, { valorEsperado: val })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <input type="checkbox" checked={!!h.pagado} onChange={(e) => togglePagado(h, e.target.checked)} />
+                </td>
+                <td style={styles.ovTd}>
+                  {h.pagado ? (
+                    <input type="date" style={styles.miniInput} value={h.fechaPago || ""} onChange={(e) => updateHito(h.id, { fechaPago: e.target.value })} />
+                  ) : (
+                    <span style={styles.presReadonlyText}>—</span>
+                  )}
+                </td>
+                <td style={styles.ovTd}>
+                  {h.pagado ? (
+                    <MoneyInput style={styles.miniInput} value={h.valorPagado} onChange={(val) => updateHito(h.id, { valorPagado: val })} />
+                  ) : (
+                    <span style={styles.presReadonlyText}>—</span>
+                  )}
+                </td>
+                <td style={styles.ovTd}>
+                  <button style={styles.rowDeleteBtn} onClick={() => setConfirmDelete({ id: h.id, label: h.nombre || "este hito" })}>
+                    <Trash2 size={13} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+            <tr>
+              <td style={styles.ovTd}>
+                <input style={styles.miniInput} placeholder="Ej. Anticipo, Entrega 1..." value={newHito.nombre} onChange={(e) => setNewHito({ ...newHito, nombre: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}>
+                <input type="date" style={styles.miniInput} value={newHito.fechaProgramada} onChange={(e) => setNewHito({ ...newHito, fechaProgramada: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}>
+                <MoneyInput style={styles.miniInput} placeholder="$" value={newHito.valorEsperado} onChange={(val) => setNewHito({ ...newHito, valorEsperado: val })} />
+              </td>
+              <td style={styles.ovTd}></td>
+              <td style={styles.ovTd}></td>
+              <td style={styles.ovTd}></td>
+              <td style={styles.ovTd}>
+                <button style={styles.addRowBtn} onClick={addHito}><Plus size={14} /></button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {confirmDelete && (
+        <ConfirmModal
+          title="Eliminar hito de pago"
+          message={`¿Eliminar el hito "${confirmDelete.label}"? Esta acción no se puede deshacer.`}
+          confirmLabel="Eliminar"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => { deleteHito(confirmDelete.id); setConfirmDelete(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
 // Sube el archivo .xlsx lleno y muestra cuántas órdenes/pagos trae antes de aplicar — reemplaza
 // TODA la lista de órdenes de este proyecto por lo que traiga el archivo (por eso el aviso).
 function PagosTemplateModal({ onClose, onImport }) {
@@ -3066,7 +3337,7 @@ function ProjectFormModal({ onClose, onSave, initial, title, submitLabel }) {
 
 const TAB_LABELS = {
   resumen: "Resumen", upme: "UPME", energizacion: "Energización",
-  cronograma: "Cronograma", presupuesto: "Presupuesto", pagos: "Pagos",
+  cronograma: "Cronograma", presupuesto: "Presupuesto", pagos: "Pagos", balance: "Balance financiero",
 };
 
 // Lista quién guardó cambios en el proyecto y cuándo (tabla project_history). Es de solo lectura —
@@ -3487,6 +3758,7 @@ function PrintResumenProject({ project, data }) {
   const presTotals = presupuestoTotals(data.presupuesto);
   const desviacionPct = presTotals.base ? Math.round((presTotals.diferencia / presTotals.base) * 100) : 0;
   const pagTotals = pagosTotals(data.pagos);
+  const balTotals = balanceTotals(data.balance, data.pagos);
   const nextUpme = upmeNextStep(data.upme);
   const alerts = buildProjectAlerts(data);
   const now = new Date();
@@ -3528,6 +3800,11 @@ function PrintResumenProject({ project, data }) {
             <PrCardHead color="#E77DA8">Pagos</PrCardHead>
             <PrBigPct pct={pagTotals.totalOrdenes ? Math.round((pagTotals.totalPagado / pagTotals.totalOrdenes) * 100) : 0} color="#C24E7C" />
             <div style={prCard.cardSub}>{fmtMoney(pagTotals.totalPagado)} pagado de {fmtMoney(pagTotals.totalOrdenes)} · saldo {fmtMoney(pagTotals.totalSaldo)}</div>
+          </div>
+          <div style={prCard.card}>
+            <PrCardHead color="#A78BFA">Balance financiero</PrCardHead>
+            <div style={{ fontSize: 22, fontWeight: 700, color: balTotals.saldo >= 0 ? "#3E9B4F" : "#C0392B" }}>{fmtMoney(balTotals.saldo)}</div>
+            <div style={prCard.cardSub}>Ingresos {fmtMoney(balTotals.totalIngresos)} · Pagos {fmtMoney(balTotals.totalPagos)}</div>
           </div>
         </div>
 
@@ -3653,6 +3930,8 @@ function PrintCurrentTab({ project, tab, data }) {
           <PrintPresupuestoContent data={data.presupuesto} />
         ) : tab === "pagos" ? (
           <PrintPagosContent data={data.pagos} />
+        ) : tab === "balance" ? (
+          <PrintBalanceContent data={data.balance} pagos={data.pagos} presupuesto={data.presupuesto} />
         ) : null}
       </div>
     </div>
@@ -3853,6 +4132,46 @@ function PrintPagosContent({ data }) {
               <td style={prCard.td}>{fmtMoney(o.valorTotal)}</td>
               <td style={prCard.td}>{fmtMoney(ordenPagado(o))}</td>
               <td style={prCard.td}>{fmtMoney(ordenSaldo(o))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PrintBalanceContent({ data, pagos, presupuesto }) {
+  const totals = balanceTotals(data, pagos);
+  const margen = balanceMargenTotals(data, presupuesto);
+  return (
+    <div>
+      <div style={{ ...prCard.cardSub, marginBottom: 6 }}>
+        Valor de venta: {fmtMoney(margen.valorVenta)} · Valor base: {fmtMoney(margen.presupuestoBase)} ·
+        {" "}Valor del proyecto (ejecución): {fmtMoney(margen.presupuestoEjecucion)} · Utilidad real: {fmtMoney(margen.utilidadReal)}
+      </div>
+      <div style={{ ...prCard.cardSub, marginBottom: 10 }}>
+        Ingresos: {fmtMoney(totals.totalIngresos)} · Pagos: {fmtMoney(totals.totalPagos)} · Queda: {fmtMoney(totals.saldo)}
+      </div>
+      <table style={prCard.table}>
+        <thead>
+          <tr>
+            <th style={prCard.th}>Hito de pago</th>
+            <th style={prCard.th}>Fecha programada</th>
+            <th style={prCard.th}>Valor esperado</th>
+            <th style={prCard.th}>¿Pagado?</th>
+            <th style={prCard.th}>Fecha de pago</th>
+            <th style={prCard.th}>Valor pagado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(data.hitos || []).map((h) => (
+            <tr key={h.id}>
+              <td style={prCard.td}>{h.nombre}</td>
+              <td style={prCard.td}>{fmtDate(h.fechaProgramada)}</td>
+              <td style={prCard.td}>{fmtMoney(h.valorEsperado)}</td>
+              <td style={prCard.td}>{h.pagado ? "Sí" : "No"}</td>
+              <td style={prCard.td}>{h.pagado ? fmtDate(h.fechaPago) : ""}</td>
+              <td style={prCard.td}>{h.pagado ? fmtMoney(h.valorPagado) : ""}</td>
             </tr>
           ))}
         </tbody>
