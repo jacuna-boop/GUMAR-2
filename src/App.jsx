@@ -963,8 +963,8 @@ function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExpo
       </div>
       <div style={styles.headerRight}>
         <div style={styles.tabs}>
-          <TabBtn active={tab === "balance"} onClick={() => setTab("balance")} icon={<Landmark size={14} />} label="Balance financiero" />
           <TabBtn active={tab === "resumen"} onClick={() => setTab("resumen")} icon={<MapPin size={14} />} label="Resumen" />
+          <TabBtn active={tab === "balance"} onClick={() => setTab("balance")} icon={<Landmark size={14} />} label="Balance financiero" />
           <TabBtn active={tab === "upme"} onClick={() => setTab("upme")} icon={<FileCheck size={14} />} label="UPME" />
           <TabBtn active={tab === "energizacion"} onClick={() => setTab("energizacion")} icon={<Zap size={14} />} label="Energización" />
           <TabBtn active={tab === "cronograma"} onClick={() => setTab("cronograma")} icon={<Calendar size={14} />} label="Cronograma" />
