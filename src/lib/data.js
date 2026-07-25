@@ -512,7 +512,8 @@ function emptyCronogramaState() {
 function emptyPresupuestoState() {
   return {
     // Cada lista tiene items con la misma estructura de columnas que el Excel de referencia:
-    // { id, item, categoria, descripcion, cantidad, unidad, valorUnitario (antes de IVA), ivaPct }
+    // { id, item, categoria, descripcion, cantidad, unidad, valorUnitario (antes de IVA), ivaPct,
+    //   ivaEsRecuperable, ivaRecuperableValor (digitado a mano) }
     // valorUnitarioConIva, valorTotal e ivaRecuperable se calculan (ver calcPresupuestoItem)
     base: [],
     ejecucion: [],
@@ -562,15 +563,23 @@ function ensureFullProjectData(data) {
   return { upme, energizacion, cronograma, presupuesto, pagos };
 }
 
-// Calcula valor unitario con IVA, valor total e IVA recuperable de una línea de presupuesto
+// Calcula valor unitario con IVA, valor total e IVA recuperable de una línea de presupuesto.
+// El IVA recuperable no siempre es el 100% del IVA pagado (depende de reglas tributarias que
+// varían por ítem), así que se digita a mano — "ivaRecuperableValor" — en vez de calcularse
+// siempre como ivaPct% del valor. Si el ítem no trae ese campo (datos de antes de este cambio),
+// arranca en lo que antes se calculaba automático, para no alterar los totales ya guardados.
 function calcPresupuestoItem(it) {
   const cantidad = Number(it.cantidad) || 0;
   const valorUnitario = Number(it.valorUnitario) || 0; // antes de IVA
   const ivaPct = Number(it.ivaPct) || 0;
   const valorUnitarioConIva = valorUnitario * (1 + ivaPct / 100);
   const valorTotal = cantidad * valorUnitarioConIva;
-  const ivaRecuperable = valorTotal - cantidad * valorUnitario;
-  return { valorUnitarioConIva, valorTotal, ivaRecuperable };
+  const ivaEsRecuperable = it.ivaEsRecuperable !== undefined ? !!it.ivaEsRecuperable : true;
+  const ivaRecuperableValor = it.ivaRecuperableValor !== undefined
+    ? Number(it.ivaRecuperableValor) || 0
+    : cantidad * valorUnitario * (ivaPct / 100);
+  const ivaRecuperable = ivaEsRecuperable ? ivaRecuperableValor : 0;
+  return { valorUnitarioConIva, valorTotal, ivaRecuperable, ivaEsRecuperable, ivaRecuperableValor };
 }
 
 function presupuestoListTotal(items) {

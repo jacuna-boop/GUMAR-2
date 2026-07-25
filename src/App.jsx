@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Plus, X, ChevronRight, ChevronDown, Sun, FileCheck, Zap, MapPin, Calendar,
   AlertTriangle, CheckCircle2, Circle, Trash2, Loader2, FileDown, Save,
-  LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste, Clock, Paperclip, FileUp, Users,
+  LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste, Clock, Paperclip, FileUp, Users, Link2,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar } from "recharts";
 import * as XLSX from "xlsx";
@@ -789,6 +789,8 @@ function AttachmentsButton({ projectId, modulo, entidadId, readOnly }) {
   const [open, setOpen] = useState(false);
   const [files, setFiles] = useState(null); // null = aún no cargado
   const [busy, setBusy] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkLabel, setLinkLabel] = useState("");
   const inputRef = useRef(null);
 
   const load = async () => {
@@ -826,14 +828,32 @@ function AttachmentsButton({ projectId, modulo, entidadId, readOnly }) {
     setBusy(false);
   };
 
+  const handleAddLink = async () => {
+    const url = linkUrl.trim();
+    if (!url) return;
+    setBusy(true);
+    const { data: userData } = await supabase.auth.getUser();
+    await supabase.from("attachments").insert({
+      project_id: projectId, modulo, entidad_id: String(entidadId),
+      link_url: /^https?:\/\//i.test(url) ? url : `https://${url}`,
+      file_name: linkLabel.trim() || url,
+      uploaded_by: userData?.user?.id, uploaded_by_email: userData?.user?.email,
+    });
+    setLinkUrl("");
+    setLinkLabel("");
+    await load();
+    setBusy(false);
+  };
+
   const handleDownload = async (att) => {
+    if (att.link_url) { window.open(att.link_url, "_blank"); return; }
     const { data } = await supabase.storage.from("project-files").createSignedUrl(att.file_path, 60);
     if (data?.signedUrl) window.open(data.signedUrl, "_blank");
   };
 
   const handleDelete = async (att) => {
     setBusy(true);
-    await supabase.storage.from("project-files").remove([att.file_path]);
+    if (att.file_path) await supabase.storage.from("project-files").remove([att.file_path]);
     await supabase.from("attachments").delete().eq("id", att.id);
     await load();
     setBusy(false);
@@ -860,10 +880,11 @@ function AttachmentsButton({ projectId, modulo, entidadId, readOnly }) {
                 <div key={f.id} style={styles.attachRow}>
                   <span
                     onClick={() => handleDownload(f)}
-                    style={{ cursor: "pointer", color: "#4FA8D8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                    title={f.file_name}
+                    style={{ cursor: "pointer", color: "#4FA8D8", display: "flex", alignItems: "center", gap: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    title={f.link_url || f.file_name}
                   >
-                    {f.file_name}
+                    {f.link_url ? <Link2 size={11} style={{ flexShrink: 0 }} /> : <Paperclip size={11} style={{ flexShrink: 0 }} />}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{f.file_name}</span>
                   </span>
                   {!readOnly && (
                     <button type="button" style={styles.rowDeleteBtn} onClick={() => handleDelete(f)} disabled={busy}>
@@ -885,6 +906,31 @@ function AttachmentsButton({ projectId, modulo, entidadId, readOnly }) {
               >
                 {busy ? "Subiendo…" : "Subir archivo"}
               </button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                <input
+                  placeholder="Nombre (opcional)"
+                  value={linkLabel}
+                  onChange={(e) => setLinkLabel(e.target.value)}
+                  style={{ ...styles.miniInput, width: "100%" }}
+                />
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input
+                    placeholder="Pega un enlace (Drive, SharePoint...)"
+                    value={linkUrl}
+                    onChange={(e) => setLinkUrl(e.target.value)}
+                    style={{ ...styles.miniInput, flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    style={{ ...styles.iconBtn, opacity: busy || !linkUrl.trim() ? 0.5 : 1 }}
+                    disabled={busy || !linkUrl.trim()}
+                    onClick={handleAddLink}
+                    title="Adjuntar enlace"
+                  >
+                    <Link2 size={13} />
+                  </button>
+                </div>
+              </div>
             </>
           )}
         </div>
@@ -2124,6 +2170,14 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
   });
   const [showPaste, setShowPaste] = useState(false);
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null); // { id, label } | null
+  // Filas bloqueadas por defecto (solo texto) para no dañar nada sin querer — hay que darle al
+  // lápiz para poder editar valor/cantidad/nombre/categoría de un ítem ya creado.
+  const [editingIds, setEditingIds] = useState(new Set());
+  const toggleEditing = (id) => setEditingIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const grouped = groupPresupuestoItems(items);
 
@@ -2171,6 +2225,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
             <th style={styles.ovTh}>Valor total</th>
             <th style={styles.ovTh}>IVA recuperable</th>
             <th style={styles.ovTh}>Pagado (real)</th>
+            <th style={styles.ovTh}>Categoría</th>
             <th style={styles.ovTh}></th>
           </tr>
         </thead>
@@ -2196,45 +2251,103 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                   const isLinked = linkedIds && linkedIds.has(it.id);
                   const baseValor = baseValoresPorItem?.get(it.id);
                   const itemExcedido = isLinked && baseValor !== undefined && calc.valorTotal > baseValor;
+                  const editing = editingIds.has(it.id);
                   return (
                     <tr key={it.id} style={itemExcedido ? { background: "#2A1418" } : undefined}>
                       <td style={styles.ovTd}>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           {isLinked && <span title="Viene del presupuesto base" style={{ color: "#4FA8D8" }}>●</span>}
-                          <input style={{ ...styles.miniInput, width: 56 }} value={it.item} onChange={(e) => onUpdate(it.id, { item: e.target.value })} />
+                          {editing ? (
+                            <input style={{ ...styles.miniInput, width: 56 }} value={it.item} onChange={(e) => onUpdate(it.id, { item: e.target.value })} />
+                          ) : (
+                            <span style={styles.presReadonlyText}>{it.item}</span>
+                          )}
                         </div>
                       </td>
                       <td style={styles.ovTd}>
-                        <input style={styles.miniInput} value={it.descripcion} onChange={(e) => onUpdate(it.id, { descripcion: e.target.value })} />
+                        {editing ? (
+                          <input style={styles.miniInput} value={it.descripcion} onChange={(e) => onUpdate(it.id, { descripcion: e.target.value })} />
+                        ) : (
+                          <span style={styles.presReadonlyText}>{it.descripcion}</span>
+                        )}
                       </td>
                       <td style={styles.ovTd}>
-                        <input type="number" style={{ ...styles.miniInput, width: 64 }} value={it.cantidad} onChange={(e) => onUpdate(it.id, { cantidad: e.target.value })} />
+                        {editing ? (
+                          <input type="number" style={{ ...styles.miniInput, width: 64 }} value={it.cantidad} onChange={(e) => onUpdate(it.id, { cantidad: e.target.value })} />
+                        ) : (
+                          <span style={styles.presReadonlyText}>{it.cantidad}</span>
+                        )}
                       </td>
                       <td style={styles.ovTd}>
-                        <input style={{ ...styles.miniInput, width: 64 }} value={it.unidad} onChange={(e) => onUpdate(it.id, { unidad: e.target.value })} />
+                        {editing ? (
+                          <input style={{ ...styles.miniInput, width: 64 }} value={it.unidad} onChange={(e) => onUpdate(it.id, { unidad: e.target.value })} />
+                        ) : (
+                          <span style={styles.presReadonlyText}>{it.unidad}</span>
+                        )}
                       </td>
                       <td style={styles.ovTd}>
-                        <MoneyInput style={styles.miniInput} value={it.valorUnitario} onChange={(val) => onUpdate(it.id, { valorUnitario: val })} />
+                        {editing ? (
+                          <MoneyInput style={styles.miniInput} value={it.valorUnitario} onChange={(val) => onUpdate(it.id, { valorUnitario: val })} />
+                        ) : (
+                          <span style={styles.presReadonlyText}>{fmtMoney(it.valorUnitario)}</span>
+                        )}
                       </td>
                       <td style={styles.ovTd}>
-                        <input type="number" style={{ ...styles.miniInput, width: 56 }} value={it.ivaPct} onChange={(e) => onUpdate(it.id, { ivaPct: e.target.value })} />
+                        {editing ? (
+                          <input type="number" style={{ ...styles.miniInput, width: 56 }} value={it.ivaPct} onChange={(e) => onUpdate(it.id, { ivaPct: e.target.value })} />
+                        ) : (
+                          <span style={styles.presReadonlyText}>{Number(it.ivaPct) || 0}%</span>
+                        )}
                       </td>
                       <td style={styles.ovTd}>{fmtMoney(calc.valorUnitarioConIva)}</td>
                       <td style={{ ...styles.ovTd, fontWeight: 700, color: itemExcedido ? "#E2604F" : undefined }}>
                         {fmtMoney(calc.valorTotal)}
                         {itemExcedido && <div style={styles.presExcedidoTag}>+{fmtMoney(calc.valorTotal - baseValor)} vs. base</div>}
                       </td>
-                      <td style={styles.ovTd}>{fmtMoney(calc.ivaRecuperable)}</td>
+                      <td style={styles.ovTd}>
+                        {editing ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, opacity: calc.ivaEsRecuperable ? 1 : 0.5 }}>
+                            <input
+                              type="checkbox"
+                              title="¿IVA recuperable?"
+                              checked={calc.ivaEsRecuperable}
+                              onChange={(e) => onUpdate(it.id, { ivaEsRecuperable: e.target.checked })}
+                            />
+                            <MoneyInput
+                              style={{ ...styles.miniInput, width: 90 }}
+                              value={calc.ivaRecuperableValor}
+                              onChange={(val) => onUpdate(it.id, { ivaRecuperableValor: val, ivaEsRecuperable: true })}
+                            />
+                          </div>
+                        ) : (
+                          <span style={styles.presReadonlyText}>{fmtMoney(calc.ivaRecuperable)}</span>
+                        )}
+                      </td>
                       <td style={{ ...styles.ovTd, color: pagadoPorItem?.get(it.id) ? "#7FD08A" : "#7A8A93" }}>
                         {fmtMoney(pagadoPorItem?.get(it.id) || 0)}
                       </td>
                       <td style={styles.ovTd}>
-                        <button
-                          style={styles.rowDeleteBtn}
-                          onClick={() => setConfirmDeleteItem({ id: it.id, label: it.descripcion || "este ítem" })}
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        {editing && (
+                          <input style={styles.miniInput} value={it.categoria} onChange={(e) => onUpdate(it.id, { categoria: e.target.value })} />
+                        )}
+                      </td>
+                      <td style={styles.ovTd}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                          <button
+                            type="button"
+                            style={styles.rowDeleteBtn}
+                            title={editing ? "Bloquear esta fila" : "Editar esta fila"}
+                            onClick={() => toggleEditing(it.id)}
+                          >
+                            {editing ? <Check size={13} /> : <Pencil size={13} />}
+                          </button>
+                          <button
+                            style={styles.rowDeleteBtn}
+                            onClick={() => setConfirmDeleteItem({ id: it.id, label: it.descripcion || "este ítem" })}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -2261,11 +2374,13 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
             <td style={styles.ovTd}>
               <input type="number" style={{ ...styles.miniInput, width: 56 }} placeholder="%" value={newItem.ivaPct} onChange={(e) => setNewItem({ ...newItem, ivaPct: e.target.value })} />
             </td>
-            <td style={styles.ovTd} colSpan={2}>
+            <td style={styles.ovTd}></td>
+            <td style={styles.ovTd}></td>
+            <td style={styles.ovTd}></td>
+            <td style={styles.ovTd}></td>
+            <td style={styles.ovTd}>
               <input style={styles.miniInput} placeholder="Categoría (ej. Equipos principales)" value={newItem.categoria} onChange={(e) => setNewItem({ ...newItem, categoria: e.target.value })} />
             </td>
-            <td style={styles.ovTd}></td>
-            <td style={styles.ovTd}></td>
             <td style={styles.ovTd}>
               <button style={styles.addRowBtn} onClick={addItem}><Plus size={14} /></button>
             </td>
@@ -4101,6 +4216,9 @@ const styles = {
     borderBottom: "1px solid #232D33", textTransform: "uppercase", letterSpacing: 0.3,
   },
   presExcedidoTag: { color: "#E2604F", fontSize: 10, fontWeight: 700, textTransform: "none", letterSpacing: 0 },
+  presReadonlyText: {
+    display: "inline-block", padding: "5px 8px", fontSize: 11.5, fontFamily: FONT_BODY, color: "#C7D1D6",
+  },
   pasteBtnRow: { display: "flex", justifyContent: "flex-end", marginBottom: 10 },
   pasteBtn: {
     display: "flex", alignItems: "center", gap: 6, background: "#1C242A", border: "1px solid #2A3339",

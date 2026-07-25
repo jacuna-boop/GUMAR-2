@@ -225,8 +225,9 @@ create table if not exists attachments (
   project_id uuid not null references projects(id) on delete cascade,
   modulo text not null, -- 'upme' | 'energizacion' | 'cronograma'
   entidad_id text not null, -- id del paso/hito/tarea al que pertenece
-  file_path text not null, -- ruta dentro del bucket "project-files"
+  file_path text, -- ruta dentro del bucket "project-files" (vacío si es un enlace, ver link_url)
   file_name text not null,
+  link_url text, -- si el "adjunto" es un enlace externo (Drive, SharePoint...) en vez de un archivo
   uploaded_by uuid references auth.users(id),
   uploaded_by_email text,
   created_at timestamptz default now()
