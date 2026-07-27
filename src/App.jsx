@@ -18,6 +18,7 @@ import {
   CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, fmtDate, fmtTime, fmtDateTime,
   emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyPresupuestoState, emptyPagosState,
   emptyBalanceState, balanceTotals, balanceMargenTotals, balanceFlujoCaja, balanceHitosAlertas,
+  clonePresupuestoState, cloneCronogramaState, clonePagosState, cloneBalanceState, cloneUpmeState, cloneEnergizacionState,
   emptyProjectData, ensureFullProjectData, buildPresupuestoBaseFromTemplate, buildCronogramaBaseFromTemplate,
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData,
   parseCronogramaPaste, cronogramaAvanceActual, matchCronogramaTasks, applyCronogramaMerge,
@@ -271,7 +272,10 @@ function Dashboard({ session }) {
     };
   }, [persistProjectData]);
 
-  const addProject = async (name, capacity, location) => {
+  // cloneFrom: null, o { sourceProjectId, modules: { upme, energizacion, cronograma, presupuesto, pagos, balance } }
+  // — cada módulo marcado se copia tal cual del proyecto de origen (con ids nuevos); los que no se
+  // marcan arrancan como en un proyecto nuevo normal (plantilla base para presupuesto/cronograma).
+  const addProject = async (name, capacity, location, cloneFrom) => {
     const { data, error } = await supabase.from("projects").insert({ name, capacity, location, created_by: user.id }).select().single();
     if (error || !data) { setSaveError(true); return; }
     const newProject = rowToProject(data);
@@ -283,6 +287,17 @@ function Dashboard({ session }) {
       presupuesto: buildPresupuestoBaseFromTemplate(),
       cronograma: buildCronogramaBaseFromTemplate(),
     };
+    if (cloneFrom?.sourceProjectId) {
+      const { data: srcRow } = await supabase.from("project_data").select("*").eq("project_id", cloneFrom.sourceProjectId).maybeSingle();
+      const src = ensureFullProjectData(srcRow || {});
+      const mods = cloneFrom.modules || {};
+      if (mods.upme) fresh.upme = cloneUpmeState(src.upme);
+      if (mods.energizacion) fresh.energizacion = cloneEnergizacionState(src.energizacion);
+      if (mods.cronograma) fresh.cronograma = cloneCronogramaState(src.cronograma);
+      if (mods.presupuesto) fresh.presupuesto = clonePresupuestoState(src.presupuesto);
+      if (mods.pagos) fresh.pagos = clonePagosState(src.pagos);
+      if (mods.balance) fresh.balance = cloneBalanceState(src.balance);
+    }
     await supabase.from("project_data").insert({
       project_id: newProject.id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, balance: fresh.balance, updated_by: user.id,
     });
@@ -543,6 +558,7 @@ function Dashboard({ session }) {
           submitLabel="Crear proyecto"
           onClose={() => setShowAddProject(false)}
           onSave={addProject}
+          existingProjects={projects}
         />
       )}
       {editingProject && (
@@ -962,7 +978,7 @@ function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExpo
         </div>
       </div>
       <div style={styles.headerRight}>
-        <div style={styles.tabs}>
+        <div style={styles.tabs} className="app-tabs">
           <TabBtn active={tab === "resumen"} onClick={() => setTab("resumen")} icon={<MapPin size={14} />} label="Resumen" />
           <TabBtn active={tab === "balance"} onClick={() => setTab("balance")} icon={<Landmark size={14} />} label="Balance financiero" />
           <TabBtn active={tab === "upme"} onClick={() => setTab("upme")} icon={<FileCheck size={14} />} label="UPME" />
@@ -1049,7 +1065,7 @@ function Resumen({ data, setTab }) {
   const alerts = buildProjectAlerts(data);
 
   return (
-    <div style={styles.resumenGrid}>
+    <div style={styles.resumenGrid} className="app-resumen-grid">
       <div
         style={{ ...styles.card, ...styles.cardClickable }}
         role="button"
@@ -1182,7 +1198,7 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
 
   return (
     <div>
-      <div style={styles.overviewStatRow}>
+      <div style={styles.overviewStatRow} className="app-stat-row">
         <div style={styles.overviewStat}>
           <div style={styles.overviewStatNum}>{projects.length}</div>
           <div style={styles.overviewStatLabel}>Proyectos</div>
@@ -1201,7 +1217,7 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
         </div>
       </div>
 
-      <div style={styles.overviewStatRow}>
+      <div style={styles.overviewStatRow} className="app-stat-row">
         <div style={styles.overviewStat}>
           <div style={{ ...styles.overviewStatNum, fontSize: 17, color: "#7FD08A" }}>{fmtMoney(totalBase)}</div>
           <div style={styles.overviewStatLabel}>Presupuesto base (todos los proyectos)</div>
@@ -2078,7 +2094,7 @@ function PresupuestoModule({ data, onChange, pagos }) {
 
   return (
     <div>
-      <div style={styles.overviewStatRow}>
+      <div style={styles.overviewStatRow} className="app-stat-row">
         <div style={styles.overviewStat}>
           <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#4FA8D8" }}>{fmtMoney(totals.base)}</div>
           <div style={styles.overviewStatLabel}>Presupuesto base</div>
@@ -2678,7 +2694,7 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [] }) {
         <PagosTemplateModal onClose={() => setShowTemplateUpload(false)} onImport={(ordenes) => { onChange({ ...data, ordenes }); setShowTemplateUpload(false); }} />
       )}
 
-      <div style={styles.overviewStatRow}>
+      <div style={styles.overviewStatRow} className="app-stat-row">
         <div style={styles.overviewStat}>
           <div style={{ ...styles.overviewStatNum, fontSize: 18 }}>{fmtMoney(totals.totalOrdenes)}</div>
           <div style={styles.overviewStatLabel}>Total en órdenes de servicio</div>
@@ -2991,7 +3007,7 @@ function BalanceModule({ data, onChange, pagos, presupuesto }) {
             onChange={(val) => onChange({ ...data, valorVentaCliente: val })}
           />
         </div>
-        <div style={styles.overviewStatRow}>
+        <div style={styles.overviewStatRow} className="app-stat-row">
           <div style={styles.overviewStat}>
             <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#A78BFA" }}>{fmtMoney(margen.valorVenta)}</div>
             <div style={styles.overviewStatLabel}>Valor de venta (cliente)</div>
@@ -3033,7 +3049,7 @@ function BalanceModule({ data, onChange, pagos, presupuesto }) {
         </div>
       </div>
 
-      <div style={styles.overviewStatRow}>
+      <div style={styles.overviewStatRow} className="app-stat-row">
         <div style={styles.overviewStat}>
           <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#5FBF8F" }}>{fmtMoney(totals.totalIngresos)}</div>
           <div style={styles.overviewStatLabel}>Ingresos (consignado por el cliente)</div>
@@ -3272,14 +3288,35 @@ function parseUbicacion(location) {
   return { departamento: "", municipio: "" };
 }
 
-function ProjectFormModal({ onClose, onSave, initial, title, submitLabel }) {
+const CLONE_MODULE_OPTIONS = [
+  { key: "presupuesto", label: "Presupuesto" },
+  { key: "cronograma", label: "Cronograma" },
+  { key: "upme", label: "UPME" },
+  { key: "energizacion", label: "Energización" },
+  { key: "pagos", label: "Pagos" },
+  { key: "balance", label: "Balance financiero" },
+];
+
+function ProjectFormModal({ onClose, onSave, initial, title, submitLabel, existingProjects }) {
   const [name, setName] = useState(initial?.name || "");
   const [capacity, setCapacity] = useState(initial?.capacity || "");
   const initialUbicacion = parseUbicacion(initial?.location);
   const [departamento, setDepartamento] = useState(initialUbicacion.departamento);
   const [municipio, setMunicipio] = useState(initialUbicacion.municipio);
+  const [cloneSourceId, setCloneSourceId] = useState("");
+  const [cloneModules, setCloneModules] = useState({
+    presupuesto: true, cronograma: true, upme: false, energizacion: false, pagos: false, balance: false,
+  });
 
   const location = departamento && municipio ? `${municipio}, ${departamento}` : "";
+  const canClone = !initial && existingProjects && existingProjects.length > 0;
+
+  const handleSave = () => {
+    const cloneFrom = cloneSourceId
+      ? { sourceProjectId: cloneSourceId, modules: cloneModules }
+      : null;
+    onSave(name.trim(), capacity.trim(), location, cloneFrom);
+  };
 
   return (
     <div style={styles.modalOverlay} onClick={onClose}>
@@ -3323,10 +3360,41 @@ function ProjectFormModal({ onClose, onSave, initial, title, submitLabel }) {
             ))}
           </select>
         </label>
+
+        {canClone && (
+          <label style={styles.modalField}>
+            <span>Crear con base a un proyecto existente (opcional)</span>
+            <select style={styles.input} value={cloneSourceId} onChange={(e) => setCloneSourceId(e.target.value)}>
+              <option value="">Desde cero (plantilla en blanco)</option>
+              {existingProjects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {canClone && cloneSourceId && (
+          <div style={{ margin: "4px 0 12px" }}>
+            <div style={{ fontSize: 12, color: "#7A8A93", marginBottom: 6 }}>¿Qué quieres copiar de ese proyecto?</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {CLONE_MODULE_OPTIONS.map((m) => (
+                <label key={m.key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: "#E8EDEF" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!cloneModules[m.key]}
+                    onChange={(e) => setCloneModules({ ...cloneModules, [m.key]: e.target.checked })}
+                  />
+                  {m.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
         <button
           style={{ ...styles.addProjectBtn, marginTop: 8, opacity: name.trim() ? 1 : 0.5 }}
           disabled={!name.trim()}
-          onClick={() => onSave(name.trim(), capacity.trim(), location)}
+          onClick={handleSave}
         >
           {submitLabel}
         </button>
@@ -4215,6 +4283,11 @@ function GlobalStyle() {
           border-bottom: 1px solid #232D33 !important;
         }
         .app-main { min-height: 54vh; }
+        .app-tabs { overflow-x: auto !important; flex-wrap: nowrap !important; -webkit-overflow-scrolling: touch; }
+        .app-tabs::-webkit-scrollbar { height: 3px; }
+        .app-resumen-grid { grid-template-columns: 1fr !important; }
+        .app-stat-row { grid-template-columns: repeat(2, 1fr) !important; }
+        .app-main input, .app-main select, .app-main button { min-height: 34px; }
       }
     `}</style>
   );
@@ -4405,7 +4478,7 @@ const styles = {
     position: "fixed", inset: 0, background: "#00000090", display: "flex",
     alignItems: "center", justifyContent: "center", zIndex: 50,
   },
-  modal: { background: "#171E23", border: "1px solid #2A3339", borderRadius: 14, padding: 24, width: 360 },
+  modal: { background: "#171E23", border: "1px solid #2A3339", borderRadius: 14, padding: 24, width: "min(360px, calc(100vw - 32px))" },
   modalHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
   iconBtn: { background: "none", border: "none", color: "#7A8A93", cursor: "pointer" },
   modalField: { display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#7A8A93", marginBottom: 14 },

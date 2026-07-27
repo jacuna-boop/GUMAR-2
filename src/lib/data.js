@@ -538,6 +538,45 @@ function emptyBalanceState() {
   };
 }
 
+// Funciones para "nuevo proyecto con base a uno existente": copian un módulo de otro proyecto,
+// generando ids nuevos para no compartir identidad con el proyecto de origen (así borrar/editar un
+// ítem en el proyecto nuevo no afecta al original). Las predecesoras del cronograma se referencian
+// por "displayId" (no por id interno), así que no hace falta reescribirlas al clonar.
+function clonePresupuestoState(presupuesto) {
+  const remap = (it) => ({ ...it, id: uid() });
+  return {
+    base: (presupuesto?.base || []).map(remap),
+    ejecucion: (presupuesto?.ejecucion || []).map(remap),
+  };
+}
+function cloneCronogramaState(cronograma) {
+  return {
+    tasks: (cronograma?.tasks || []).map((t) => ({ ...t, id: uid() })),
+    seguimiento: (cronograma?.seguimiento || []).map((s) => ({ ...s, id: uid() })),
+  };
+}
+function clonePagosState(pagos) {
+  return {
+    ordenes: (pagos?.ordenes || []).map((o) => ({
+      ...o,
+      id: uid(),
+      pagos: (o.pagos || []).map((p) => ({ ...p, id: uid() })),
+    })),
+  };
+}
+function cloneBalanceState(balance) {
+  return {
+    hitos: (balance?.hitos || []).map((h) => ({ ...h, id: uid() })),
+    valorVentaCliente: Number(balance?.valorVentaCliente) || 0,
+  };
+}
+function cloneUpmeState(upme) {
+  return upme ? JSON.parse(JSON.stringify(upme)) : emptyUpmeState();
+}
+function cloneEnergizacionState(energizacion) {
+  return energizacion ? JSON.parse(JSON.stringify(energizacion)) : emptyEnergizacionState();
+}
+
 function emptyProjectData() {
   return {
     upme: emptyUpmeState(),
@@ -1411,6 +1450,12 @@ export {
   balanceMargenTotals,
   balanceFlujoCaja,
   balanceHitosAlertas,
+  clonePresupuestoState,
+  cloneCronogramaState,
+  clonePagosState,
+  cloneBalanceState,
+  cloneUpmeState,
+  cloneEnergizacionState,
   emptyProjectData,
   ensureFullProjectData,
   fractionElapsed,

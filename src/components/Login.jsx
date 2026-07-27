@@ -2,6 +2,11 @@ import { useState } from "react";
 import { Sun } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
+// Solo el equipo de Gumar puede registrarse solo — esto es una primera valla en el navegador,
+// pero la de verdad está en el trigger handle_new_user() de la base de datos (ver schema.sql),
+// que rechaza el registro aunque alguien se salte esta pantalla y llame a la API directo.
+const ALLOWED_EMAIL_DOMAIN = "@gumarp.com.co";
+
 export default function Login() {
   const [mode, setMode] = useState("signin"); // "signin" | "signup"
   const [email, setEmail] = useState("");
@@ -15,6 +20,10 @@ export default function Login() {
     e.preventDefault();
     setError("");
     setInfo("");
+    if (mode === "signup" && !email.trim().toLowerCase().endsWith(ALLOWED_EMAIL_DOMAIN)) {
+      setError(`El registro solo está disponible para correos ${ALLOWED_EMAIL_DOMAIN}.`);
+      return;
+    }
     setLoading(true);
     try {
       if (mode === "signin") {
@@ -67,7 +76,7 @@ export default function Login() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength={6}
+              minLength={8}
               autoComplete={mode === "signin" ? "current-password" : "new-password"}
             />
           </label>

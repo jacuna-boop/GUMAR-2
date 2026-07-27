@@ -63,10 +63,16 @@ create table if not exists profiles (
 -- promueve a mano a quien deba ser 'admin' con el update de abajo.
 alter table profiles add column if not exists role text not null default 'editor' check (role in ('admin', 'editor', 'lector'));
 
--- Crea automáticamente un perfil cuando alguien se registra
+-- Crea automáticamente un perfil cuando alguien se registra. También es la valla real contra
+-- registro abierto: si el correo no es del dominio de Gumar, aborta el registro completo
+-- (revienta la transacción del insert en auth.users) — la validación en Login.jsx es solo para
+-- mostrar un mensaje bonito antes de llegar aquí, pero esto es lo que de verdad protege.
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin
+  if new.email !~* '@gumarp\.com\.co$' then
+    raise exception 'Solo se permite registro con correos @gumarp.com.co';
+  end if;
   insert into public.profiles (id, email, full_name)
   values (new.id, new.email, coalesce(new.raw_user_meta_data->>'full_name', new.email));
   return new;

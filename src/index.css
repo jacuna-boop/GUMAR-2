@@ -23,4 +23,9 @@ select option { background: #171E23; }
     border-bottom: 1px solid #232D33 !important;
   }
   .app-main { min-height: 54vh; }
+  .app-tabs { overflow-x: auto !important; flex-wrap: nowrap !important; -webkit-overflow-scrolling: touch; }
+  .app-tabs::-webkit-scrollbar { height: 3px; }
+  .app-resumen-grid { grid-template-columns: 1fr !important; }
+  .app-stat-row { grid-template-columns: repeat(2, 1fr) !important; }
+  .app-main input, .app-main select, .app-main button { min-height: 34px; }
 }
