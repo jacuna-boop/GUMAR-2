@@ -69,17 +69,26 @@ function Dashboard({ session }) {
   const [deleteTarget, setDeleteTarget] = useState(null); // { id, name } | null
   const [editingProject, setEditingProject] = useState(null); // project object | null
   const [managingMembers, setManagingMembers] = useState(null); // project object | null
+  const [showCargosModal, setShowCargosModal] = useState(false);
+  const [pagosExportRange, setPagosExportRange] = useState(null); // { from, to } | null
   const [showImportText, setShowImportText] = useState(false);
   const [view, setView] = useState("overview"); // "overview" | "project"
   const [printTarget, setPrintTarget] = useState(null); // null | "project" | "general" | "tab"
   const [showExportModal, setShowExportModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [role, setRole] = useState("editor"); // "admin" | "editor" | "lector" — "editor" es el default seguro
+  const [cargoPerms, setCargoPerms] = useState({}); // casillas del cargo asignado (ver tabla "cargos") — vacío = sin permisos
+  const [myFullName, setMyFullName] = useState("");
   const isAdmin = role === "admin";
   const isLector = role === "lector";
+  // admin siempre puede todo; lector nunca puede editar nada (sin importar el cargo); el resto
+  // depende de si su cargo tiene esa casilla marcada.
+  const hasPerm = useCallback((key) => isAdmin || (!isLector && !!cargoPerms?.[key]), [isAdmin, isLector, cargoPerms]);
+  const canDeleteProjects = hasPerm("puede_eliminar_proyectos");
+  const canManageUsers = hasPerm("puede_gestionar_usuarios");
 
   useEffect(() => {
-    const onAfterPrint = () => setPrintTarget(null);
+    const onAfterPrint = () => { setPrintTarget(null); setPagosExportRange(null); };
     window.addEventListener("afterprint", onAfterPrint);
     return () => window.removeEventListener("afterprint", onAfterPrint);
   }, []);
@@ -87,17 +96,19 @@ function Dashboard({ session }) {
 
   const rowToProject = (row) => ({ id: row.id, name: row.name, capacity: row.capacity, location: row.location, createdAt: row.created_at });
 
-  // Initial load: full project list + el rol de quien inició sesión (para permisos)
+  // Initial load: full project list + el rol y cargo de quien inició sesión (para permisos)
   useEffect(() => {
     (async () => {
       const [{ data, error }, roleResult] = await Promise.all([
         supabase.from("projects").select("*").order("created_at", { ascending: true }),
-        supabase.from("profiles").select("role").eq("id", user.id).maybeSingle(),
+        supabase.from("profiles").select("role, full_name, cargos(*)").eq("id", user.id).maybeSingle(),
       ]);
       if (!error && data) setProjects(data.map(rowToProject));
-      // Si la columna "role" todavía no existe (no se ha corrido la migración) o no hay perfil,
-      // se queda en "editor" por defecto — no rompe el acceso de nadie.
+      // Si la columna "role"/"cargo_id" todavía no existe (no se ha corrido la migración) o no hay
+      // perfil/cargo asignado, se queda en los valores por defecto — no rompe el acceso de nadie.
       if (!roleResult.error && roleResult.data?.role) setRole(roleResult.data.role);
+      if (!roleResult.error && roleResult.data?.cargos) setCargoPerms(roleResult.data.cargos);
+      if (!roleResult.error && roleResult.data?.full_name) setMyFullName(roleResult.data.full_name);
       setLoading(false);
     })();
   }, []);
@@ -402,6 +413,7 @@ function Dashboard({ session }) {
 
   const selected = projects.find((p) => p.id === selectedId);
   const data = projectData[selectedId];
+  const tabReadOnly = tab !== "resumen" && !hasPerm(TAB_PERM_KEY[tab]);
 
   if (loading) {
     return (
@@ -429,6 +441,7 @@ function Dashboard({ session }) {
           onDelete={(p) => setDeleteTarget({ id: p.id, name: p.name })}
           onEditProject={(p) => setEditingProject(p)}
           onManageMembers={(p) => setManagingMembers(p)}
+          onManageCargos={() => setShowCargosModal(true)}
           projectData={projectData}
           onExport={exportData}
           onImportFile={importData}
@@ -437,6 +450,8 @@ function Dashboard({ session }) {
           onSignOut={() => supabase.auth.signOut()}
           isAdmin={isAdmin}
           isLector={isLector}
+          canDeleteProjects={canDeleteProjects}
+          canManageUsers={canManageUsers}
         />
         <main className="app-main" style={styles.main}>
           {projects.length === 0 ? (
@@ -478,12 +493,12 @@ function Dashboard({ session }) {
                 onExportPDF={() => setShowExportModal(true)}
                 onShowHistory={() => setShowHistory(true)}
               />
-              {isLector && (
+              {tabReadOnly && (
                 <div style={styles.readonlyBanner}>
-                  <Circle size={12} /> Modo solo lectura — puedes ver y exportar, pero no editar.
+                  <Circle size={12} /> Modo solo lectura en esta pestaña — puedes ver y exportar, pero no editar.
                 </div>
               )}
-              <div style={styles.content} className={isLector ? "readonly-gate" : undefined}>
+              <div style={styles.content} className={tabReadOnly ? "readonly-gate" : undefined}>
                 {!data ? (
                   <div style={{ color: "#8B9AA3", padding: 40 }}>Cargando proyecto…</div>
                 ) : tab === "resumen" ? (
@@ -493,21 +508,21 @@ function Dashboard({ session }) {
                     data={data.upme}
                     onChange={(nextUpme) => updateProjectData(selectedId, (cur) => ({ ...cur, upme: nextUpme }))}
                     projectId={selectedId}
-                    isLector={isLector}
+                    isLector={tabReadOnly}
                   />
                 ) : tab === "energizacion" ? (
                   <EnergizacionModule
                     data={data.energizacion}
                     onChange={(nextEner) => updateProjectData(selectedId, (cur) => ({ ...cur, energizacion: nextEner }))}
                     projectId={selectedId}
-                    isLector={isLector}
+                    isLector={tabReadOnly}
                   />
                 ) : tab === "cronograma" ? (
                   <CronogramaModule
                     data={data.cronograma}
                     onChange={(nextCrono) => updateProjectData(selectedId, (cur) => ({ ...cur, cronograma: nextCrono }))}
                     projectId={selectedId}
-                    isLector={isLector}
+                    isLector={tabReadOnly}
                   />
                 ) : tab === "presupuesto" ? (
                   <PresupuestoModule
@@ -521,6 +536,12 @@ function Dashboard({ session }) {
                     onChange={(nextPagos) => updateProjectData(selectedId, (cur) => ({ ...cur, pagos: nextPagos }))}
                     projectName={selected.name}
                     presupuestoBase={data.presupuesto.base}
+                    canAprobarPagos={hasPerm("puede_aprobar_pagos")}
+                    approverName={myFullName || user.email}
+                    onExportProgramados={(range) => {
+                      setPagosExportRange(range);
+                      setTimeout(() => window.print(), 50);
+                    }}
                   />
                 ) : (
                   <BalanceModule
@@ -538,6 +559,9 @@ function Dashboard({ session }) {
       {printTarget === "project" && selected && data && <PrintResumenProject project={selected} data={data} />}
       {printTarget === "general" && <PrintResumenGeneral projects={projects} projectData={projectData} />}
       {printTarget === "tab" && selected && data && <PrintCurrentTab project={selected} tab={tab} data={data} />}
+      {pagosExportRange && selected && data && (
+        <PrintPagosRangeContent project={selected} data={data.pagos} range={pagosExportRange} />
+      )}
       {showExportModal && selected && (
         <ExportPdfModal
           tab={tab}
@@ -576,6 +600,9 @@ function Dashboard({ session }) {
       {managingMembers && (
         <ProjectMembersModal project={managingMembers} onClose={() => setManagingMembers(null)} />
       )}
+      {showCargosModal && (
+        <CargosModal onClose={() => setShowCargosModal(false)} />
+      )}
       {deleteTarget && (
         <ConfirmModal
           title="Eliminar proyecto"
@@ -600,7 +627,7 @@ function Dashboard({ session }) {
   );
 }
 
-function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, onEditProject, onManageMembers, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut, isAdmin, isLector }) {
+function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, onEditProject, onManageMembers, onManageCargos, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut, isAdmin, isLector, canDeleteProjects, canManageUsers }) {
   const fileInputRef = React.useRef(null);
 
   return (
@@ -619,6 +646,12 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
       >
         <LayoutGrid size={15} /> Resumen general
       </button>
+
+      {canManageUsers && (
+        <button style={styles.overviewNavBtn} onClick={onManageCargos}>
+          <Users size={15} /> Cargos y usuarios
+        </button>
+      )}
 
       {!isLector && (
         <button style={styles.addProjectBtn} onClick={onAdd}>
@@ -662,7 +695,7 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
                       <Pencil size={13} />
                     </button>
                   )}
-                  {isAdmin && (
+                  {canManageUsers && (
                     <button
                       style={styles.deleteBtn}
                       title="Gestionar acceso"
@@ -674,7 +707,7 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
                       <Users size={13} />
                     </button>
                   )}
-                  {isAdmin && (
+                  {canDeleteProjects && (
                     <button
                       style={styles.deleteBtn}
                       onClick={(e) => {
@@ -2611,7 +2644,7 @@ function parsePagosWorkbook(arrayBuffer) {
   return { ordenes: Array.from(ordenesMap.values()), skipped };
 }
 
-function PagosModule({ data, onChange, projectName, presupuestoBase = [] }) {
+function PagosModule({ data, onChange, projectName, presupuestoBase = [], canAprobarPagos = false, approverName = "", onExportProgramados }) {
   const presupuestoGrupos = groupPresupuestoItems(presupuestoBase);
   const presupuestoLabel = (id) => {
     const it = presupuestoBase.find((b) => b.id === id);
@@ -2622,6 +2655,7 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [] }) {
   const [newPago, setNewPago] = useState({ fecha: todayISO(), valor: "", concepto: "", estado: "pagado" });
   const [confirmDelete, setConfirmDelete] = useState(null); // { kind: "orden" | "pago", ordenId, pagoId, label } | null
   const [showTemplateUpload, setShowTemplateUpload] = useState(false);
+  const [showRangeExport, setShowRangeExport] = useState(false);
   const totals = pagosTotals(data);
   const alertas = pagosProximosAlertas(data);
 
@@ -2688,10 +2722,20 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [] }) {
         <button style={styles.pasteBtn} onClick={() => setShowTemplateUpload(true)}>
           <FileUp size={14} /> Cargar plantilla Excel
         </button>
+        <button style={styles.pasteBtn} onClick={() => setShowRangeExport(true)}>
+          <FileDown size={14} /> Exportar programados por fecha
+        </button>
       </div>
 
       {showTemplateUpload && (
         <PagosTemplateModal onClose={() => setShowTemplateUpload(false)} onImport={(ordenes) => { onChange({ ...data, ordenes }); setShowTemplateUpload(false); }} />
+      )}
+
+      {showRangeExport && (
+        <PagosRangeExportModal
+          onClose={() => setShowRangeExport(false)}
+          onExport={(range) => { onExportProgramados?.(range); setShowRangeExport(false); }}
+        />
       )}
 
       <div style={styles.overviewStatRow} className="app-stat-row">
@@ -2824,6 +2868,7 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [] }) {
                                 <th style={styles.ovTh}>Fecha</th>
                                 <th style={styles.ovTh}>Valor</th>
                                 <th style={styles.ovTh}>Concepto</th>
+                                <th style={styles.ovTh}>Aprobado</th>
                                 <th style={styles.ovTh}></th>
                               </tr>
                             </thead>
@@ -2867,6 +2912,26 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [] }) {
                                       />
                                     </td>
                                     <td style={styles.ovTd}>
+                                      <input
+                                        type="checkbox"
+                                        className="approve-toggle"
+                                        title={canAprobarPagos ? "Marcar como aprobado" : "No tienes permiso para aprobar pagos"}
+                                        checked={!!p.aprobado}
+                                        disabled={!canAprobarPagos}
+                                        onChange={(e) => {
+                                          const checked = e.target.checked;
+                                          updatePago(o.id, p.id, checked
+                                            ? { aprobado: true, aprobadoPor: approverName, aprobadoEn: todayISO() }
+                                            : { aprobado: false, aprobadoPor: null, aprobadoEn: null });
+                                        }}
+                                      />
+                                      {p.aprobado && p.aprobadoPor && (
+                                        <div style={{ fontSize: 10, color: "#7A8A93", marginTop: 3 }}>
+                                          Aprobado por {p.aprobadoPor}{p.aprobadoEn ? ` (${fmtDate(p.aprobadoEn)})` : ""}
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td style={styles.ovTd}>
                                       <button style={styles.rowDeleteBtn} onClick={() => askDeletePago(o.id, p)}><Trash2 size={13} /></button>
                                     </td>
                                   </tr>
@@ -2888,6 +2953,7 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [] }) {
                                 <td style={styles.ovTd}>
                                   <input style={styles.miniInput} placeholder="Concepto (opcional)" value={newPago.concepto} onChange={(e) => setNewPago({ ...newPago, concepto: e.target.value })} />
                                 </td>
+                                <td style={styles.ovTd}></td>
                                 <td style={styles.ovTd}>
                                   <button style={styles.addRowBtn} onClick={() => addPago(o.id)}><Plus size={14} /></button>
                                 </td>
@@ -3195,6 +3261,40 @@ function BalanceModule({ data, onChange, pagos, presupuesto }) {
 
 // Sube el archivo .xlsx lleno y muestra cuántas órdenes/pagos trae antes de aplicar — reemplaza
 // TODA la lista de órdenes de este proyecto por lo que traiga el archivo (por eso el aviso).
+// Deja elegir un rango de fechas para exportar (imprimir) los pagos con estado "programado" cuya
+// fecha caiga dentro de ese rango. Ambas fechas son opcionales por separado (solo "desde", solo
+// "hasta", o ambas) para no obligar a acotar por los dos lados.
+function PagosRangeExportModal({ onClose, onExport }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Exportar pagos programados</h3>
+          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+        </div>
+        <p style={styles.exportHint}>
+          Elige el rango de fechas de los pagos programados que quieres exportar. Se abrirá el
+          diálogo de impresión — elige "Guardar como PDF".
+        </p>
+        <label style={styles.modalField}>
+          <span>Desde</span>
+          <input type="date" style={styles.input} value={from} onChange={(e) => setFrom(e.target.value)} />
+        </label>
+        <label style={styles.modalField}>
+          <span>Hasta</span>
+          <input type="date" style={styles.input} value={to} onChange={(e) => setTo(e.target.value)} />
+        </label>
+        <button style={{ ...styles.addProjectBtn, marginTop: 8 }} onClick={() => onExport({ from, to })}>
+          Exportar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PagosTemplateModal({ onClose, onImport }) {
   const fileInputRef = useRef(null);
   const [fileName, setFileName] = useState("");
@@ -3408,6 +3508,16 @@ const TAB_LABELS = {
   cronograma: "Cronograma", presupuesto: "Presupuesto", pagos: "Pagos", balance: "Balance financiero",
 };
 
+// Qué casilla de "cargos" controla la edición de cada pestaña (resumen no tiene, es solo dashboard).
+const TAB_PERM_KEY = {
+  upme: "puede_editar_upme",
+  energizacion: "puede_editar_energizacion",
+  cronograma: "puede_editar_cronograma",
+  presupuesto: "puede_editar_presupuesto",
+  pagos: "puede_editar_pagos",
+  balance: "puede_editar_balance",
+};
+
 // Lista quién guardó cambios en el proyecto y cuándo (tabla project_history). Es de solo lectura —
 // no restaura nada directamente, para evitar que un clic accidental pise trabajo reciente; si hace
 // falta volver a un estado anterior, se descarga esa foto en JSON y se usa "Importar" a mano.
@@ -3588,6 +3698,169 @@ function ProjectMembersModal({ project, onClose }) {
         )}
       </div>
     </div>
+  );
+}
+
+const CARGO_PERMISOS = [
+  { key: "puede_editar_upme", label: "Editar UPME" },
+  { key: "puede_editar_energizacion", label: "Editar Energización" },
+  { key: "puede_editar_cronograma", label: "Editar Cronograma" },
+  { key: "puede_editar_presupuesto", label: "Editar Presupuesto" },
+  { key: "puede_editar_pagos", label: "Editar Pagos" },
+  { key: "puede_aprobar_pagos", label: "Aprobar pagos" },
+  { key: "puede_editar_balance", label: "Editar Balance financiero" },
+  { key: "puede_eliminar_proyectos", label: "Eliminar proyectos" },
+  { key: "puede_gestionar_usuarios", label: "Gestionar cargos y usuarios" },
+];
+
+// Admin (solo lectura aquí, arriba de todo). Crea/edita cargos con sus casillas de permisos, y
+// asigna el cargo de cada persona registrada. Arranca en blanco a propósito — nadie (salvo admin)
+// tiene ningún permiso hasta que se cree un cargo y se le asigne.
+function CargosModal({ onClose }) {
+  const [cargos, setCargos] = useState(null); // null = cargando
+  const [profiles, setProfiles] = useState([]);
+  const [newCargoName, setNewCargoName] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [confirmDeleteCargo, setConfirmDeleteCargo] = useState(null); // { id, nombre } | null
+
+  const load = async () => {
+    const [{ data: cargosData, error: cargosErr }, { data: profilesData }] = await Promise.all([
+      supabase.from("cargos").select("*").order("nombre"),
+      supabase.from("profiles").select("id, email, full_name, role, cargo_id").order("email"),
+    ]);
+    if (cargosErr) setError("No se pudo cargar los cargos. Intenta de nuevo.");
+    setCargos(cargosData || []);
+    setProfiles(profilesData || []);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const addCargo = async () => {
+    if (!newCargoName.trim()) return;
+    setBusy(true);
+    setError("");
+    const { error: err } = await supabase.from("cargos").insert({ nombre: newCargoName.trim() });
+    if (err) setError("No se pudo crear el cargo (¿ya existe uno con ese nombre?).");
+    else { setNewCargoName(""); await load(); }
+    setBusy(false);
+  };
+
+  const updateCargoPerm = async (cargo, key, value) => {
+    setBusy(true);
+    setError("");
+    setCargos((prev) => prev.map((c) => (c.id === cargo.id ? { ...c, [key]: value } : c)));
+    const { error: err } = await supabase.from("cargos").update({ [key]: value }).eq("id", cargo.id);
+    if (err) { setError("No se pudo guardar el cambio. Intenta de nuevo."); await load(); }
+    setBusy(false);
+  };
+
+  const deleteCargo = async (id) => {
+    setBusy(true);
+    await supabase.from("cargos").delete().eq("id", id);
+    await load();
+    setBusy(false);
+  };
+
+  const assignCargo = async (profileId, cargoId) => {
+    setBusy(true);
+    setError("");
+    setProfiles((prev) => prev.map((p) => (p.id === profileId ? { ...p, cargo_id: cargoId || null } : p)));
+    const { error: err } = await supabase.from("profiles").update({ cargo_id: cargoId || null }).eq("id", profileId);
+    if (err) { setError("No se pudo asignar el cargo. Intenta de nuevo."); await load(); }
+    setBusy(false);
+  };
+
+  return (
+    <>
+      <div style={styles.modalOverlay} onClick={onClose}>
+        <div style={{ ...styles.exportModal, width: 640 }} onClick={(e) => e.stopPropagation()}>
+          <div style={styles.modalHead}>
+            <h3 style={styles.h3}>Cargos y usuarios</h3>
+            <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+          </div>
+          {error && <div style={styles.importError}>{error}</div>}
+          {cargos === null ? (
+            <div style={{ padding: "16px 0", color: "#7A8A93", fontSize: 13 }}>Cargando…</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#E8EDEF", margin: "8px 0" }}>Cargos</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto", marginBottom: 10 }}>
+                {cargos.length === 0 && (
+                  <div style={{ fontSize: 12, color: "#7A8A93" }}>Todavía no hay cargos creados — crea el primero abajo.</div>
+                )}
+                {cargos.map((c) => (
+                  <div key={c.id} style={{ background: "#1C242A", borderRadius: 8, padding: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <strong style={{ fontSize: 13, color: "#E8EDEF" }}>{c.nombre}</strong>
+                      <button style={styles.rowDeleteBtn} onClick={() => setConfirmDeleteCargo({ id: c.id, nombre: c.nombre })}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {CARGO_PERMISOS.map((perm) => (
+                        <label key={perm.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, color: "#C7D1D6" }}>
+                          <input
+                            type="checkbox"
+                            checked={!!c[perm.key]}
+                            disabled={busy}
+                            onChange={(e) => updateCargoPerm(c, perm.key, e.target.checked)}
+                          />
+                          {perm.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+                <input
+                  style={{ ...styles.miniInput, flex: 1 }}
+                  placeholder="Nombre del cargo nuevo (ej. Contador)"
+                  value={newCargoName}
+                  onChange={(e) => setNewCargoName(e.target.value)}
+                />
+                <button style={{ ...styles.addProjectBtn, opacity: newCargoName.trim() ? 1 : 0.5 }} disabled={!newCargoName.trim() || busy} onClick={addCargo}>
+                  <Plus size={14} /> Crear cargo
+                </button>
+              </div>
+
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#E8EDEF", margin: "8px 0" }}>Usuarios</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
+                {profiles.map((p) => (
+                  <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: "#1C242A", borderRadius: 8, padding: "8px 10px" }}>
+                    <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                      <span style={{ fontSize: 12.5, color: "#E8EDEF" }}>{p.full_name || p.email}</span>
+                      <span style={{ fontSize: 11, color: "#7A8A93" }}>{p.email}{p.role === "admin" ? " · admin (acceso a todo)" : ""}</span>
+                    </div>
+                    <select
+                      style={{ ...styles.miniInput, width: 190 }}
+                      value={p.cargo_id || ""}
+                      disabled={p.role === "admin" || busy}
+                      onChange={(e) => assignCargo(p.id, e.target.value)}
+                    >
+                      <option value="">Sin cargo</option>
+                      {cargos.map((c) => (
+                        <option key={c.id} value={c.id}>{c.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      {confirmDeleteCargo && (
+        <ConfirmModal
+          title="Eliminar cargo"
+          message={`¿Eliminar el cargo "${confirmDeleteCargo.nombre}"? Quien lo tenga asignado se queda sin permisos hasta que le asignes otro.`}
+          confirmLabel="Eliminar"
+          onCancel={() => setConfirmDeleteCargo(null)}
+          onConfirm={() => { deleteCargo(confirmDeleteCargo.id); setConfirmDeleteCargo(null); }}
+        />
+      )}
+    </>
   );
 }
 
@@ -4208,6 +4481,70 @@ function PrintPagosContent({ data }) {
   );
 }
 
+// Vista de impresión de pagos PROGRAMADOS dentro de un rango de fechas (el "desde"/"hasta" que se
+// eligió en PagosRangeExportModal). Cada bando del rango es opcional por separado.
+function PrintPagosRangeContent({ project, data, range }) {
+  const now = new Date();
+  const rows = [];
+  (data.ordenes || []).forEach((o) => {
+    (o.pagos || []).forEach((p) => {
+      if ((p.estado || "pagado") !== "programado") return;
+      if (!p.fecha) return;
+      if (range.from && p.fecha < range.from) return;
+      if (range.to && p.fecha > range.to) return;
+      rows.push({ ...p, ordenNumero: o.numero, proveedor: o.proveedor, ordenDescripcion: o.descripcion });
+    });
+  });
+  rows.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const total = rows.reduce((s, r) => s + (Number(r.valor) || 0), 0);
+  const rangoTexto = range.from && range.to
+    ? `del ${fmtDate(range.from)} al ${fmtDate(range.to)}`
+    : range.from
+      ? `desde el ${fmtDate(range.from)}`
+      : range.to
+        ? `hasta el ${fmtDate(range.to)}`
+        : "todas las fechas";
+
+  return (
+    <div className="print-only" style={prCard.page}>
+      <div style={prCard.wrap}>
+        <div style={prCard.headerRow}>
+          <h1 style={prCard.h1}>{project.name}</h1>
+          <div style={prCard.meta}>Pagos programados — {rangoTexto}</div>
+          <div style={prCard.genAt}>Generado el {fmtDateTime(now)}</div>
+        </div>
+        <div style={{ ...prCard.cardSub, marginBottom: 10 }}>
+          {rows.length} pago{rows.length === 1 ? "" : "s"} programado{rows.length === 1 ? "" : "s"} · Total: {fmtMoney(total)}
+        </div>
+        <table style={prCard.table}>
+          <thead>
+            <tr>
+              <th style={prCard.th}>Fecha</th>
+              <th style={prCard.th}>Orden</th>
+              <th style={prCard.th}>Proveedor</th>
+              <th style={prCard.th}>Concepto</th>
+              <th style={prCard.th}>Valor</th>
+              <th style={prCard.th}>Pago aprobado por</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td style={prCard.td}>{fmtDate(r.fecha)}</td>
+                <td style={prCard.td}>{r.ordenNumero}</td>
+                <td style={prCard.td}>{r.proveedor}</td>
+                <td style={prCard.td}>{r.concepto || r.ordenDescripcion}</td>
+                <td style={prCard.td}>{fmtMoney(r.valor)}</td>
+                <td style={prCard.td}>{r.aprobado && r.aprobadoPor ? r.aprobadoPor : "Sin aprobar"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function PrintBalanceContent({ data, pagos, presupuesto }) {
   const totals = balanceTotals(data, pagos);
   const margen = balanceMargenTotals(data, presupuesto);
@@ -4259,7 +4596,7 @@ function GlobalStyle() {
       .spin { animation: spin 1s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
 
-      .readonly-gate input,
+      .readonly-gate input:not(.approve-toggle),
       .readonly-gate select,
       .readonly-gate textarea,
       .readonly-gate button:not(.view-toggle) {
