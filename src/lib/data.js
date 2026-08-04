@@ -506,6 +506,18 @@ function emptyCronogramaState() {
   return {
     tasks: [], // { id, nombre, fechaInicio, fechaFin, peso }
     seguimiento: [], // { id, fecha, avance } — avance = % acumulado real en esa fecha
+    baseline: null, // { capturedAt, tasks: [{id, fechaInicio, fechaFin, peso, esGrupo}] } | null — línea base congelada
+  };
+}
+
+// "Congela" la línea base: guarda las fechas/peso actuales de cada tarea tal como están hoy, para
+// poder comparar después contra el plan reprogramado (que sigue moviéndose con las predecesoras).
+function captureCronogramaBaseline(cronograma) {
+  return {
+    capturedAt: todayISO(),
+    tasks: (cronograma?.tasks || []).map((t) => ({
+      id: t.id, fechaInicio: t.fechaInicio, fechaFin: t.fechaFin, peso: t.peso, esGrupo: t.esGrupo,
+    })),
   };
 }
 
@@ -608,7 +620,11 @@ function ensureFullProjectData(data) {
   const rawCronograma = data?.cronograma;
   const cronograma =
     rawCronograma && Array.isArray(rawCronograma.tasks)
-      ? { tasks: rawCronograma.tasks, seguimiento: Array.isArray(rawCronograma.seguimiento) ? rawCronograma.seguimiento : [] }
+      ? {
+          tasks: rawCronograma.tasks,
+          seguimiento: Array.isArray(rawCronograma.seguimiento) ? rawCronograma.seguimiento : [],
+          baseline: rawCronograma.baseline && Array.isArray(rawCronograma.baseline.tasks) ? rawCronograma.baseline : null,
+        }
       : emptyCronogramaState();
 
   const rawUpme = data?.upme;
@@ -871,6 +887,28 @@ function fractionElapsed(startISO, endISO, dateISO) {
 
 function cronogramaPesoTotal(tasks) {
   return tasks.filter((t) => !t.esGrupo).reduce((s, t) => s + (Number(t.peso) || 0), 0);
+}
+
+// Alertas de atraso del cronograma: tareas ya vencidas sin terminar, o en curso pero muy por
+// debajo del avance esperado a la fecha (más de 15 puntos por debajo del ritmo lineal esperado).
+function cronogramaAtrasoAlertas(cronograma) {
+  const hoy = todayISO();
+  const leafTasks = (cronograma?.tasks || []).filter((t) => !t.esGrupo);
+  const alertas = [];
+  leafTasks.forEach((t) => {
+    if (!t.fechaInicio || !t.fechaFin) return;
+    const pct = Number(t.pctCompletado) || 0;
+    if (pct >= 100) return;
+    if (hoy > t.fechaFin) {
+      alertas.push({ tipo: "vencido", texto: `Cronograma: "${t.nombre}" debía terminar el ${fmtDate(t.fechaFin)} y va en ${pct}%.` });
+    } else if (hoy >= t.fechaInicio) {
+      const esperado = fractionElapsed(t.fechaInicio, t.fechaFin, hoy) * 100;
+      if (esperado - pct >= 15) {
+        alertas.push({ tipo: "atrasado", texto: `Cronograma: "${t.nombre}" va en ${pct}%, se esperaba cerca de ${Math.round(esperado)}% (termina el ${fmtDate(t.fechaFin)}).` });
+      }
+    }
+  });
+  return alertas;
 }
 
 // Builds the merged baseline ("línea base") vs actual ("seguimiento") S-curve series for the chart
@@ -1460,6 +1498,8 @@ export {
   ensureFullProjectData,
   fractionElapsed,
   cronogramaPesoTotal,
+  cronogramaAtrasoAlertas,
+  captureCronogramaBaseline,
   buildCurvaSData,
   parseProjectDate,
   cronogramaAvanceActual,

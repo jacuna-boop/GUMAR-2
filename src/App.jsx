@@ -18,6 +18,7 @@ import {
   CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, fmtDate, fmtTime, fmtDateTime,
   emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyPresupuestoState, emptyPagosState,
   emptyBalanceState, balanceTotals, balanceMargenTotals, balanceFlujoCaja, balanceHitosAlertas,
+  cronogramaAtrasoAlertas,
   clonePresupuestoState, cloneCronogramaState, clonePagosState, cloneBalanceState, cloneUpmeState, cloneEnergizacionState,
   emptyProjectData, ensureFullProjectData, buildPresupuestoBaseFromTemplate, buildCronogramaBaseFromTemplate,
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData,
@@ -529,6 +530,7 @@ function Dashboard({ session }) {
                     data={data.presupuesto}
                     onChange={(nextPres) => updateProjectData(selectedId, (cur) => ({ ...cur, presupuesto: nextPres }))}
                     pagos={data.pagos}
+                    projectName={selected.name}
                   />
                 ) : tab === "pagos" ? (
                   <PagosModule
@@ -1082,6 +1084,7 @@ function buildProjectAlerts(data) {
   }
   pagosProximosAlertas(data.pagos).forEach((a) => alerts.push(a.texto));
   balanceHitosAlertas(data.balance).forEach((a) => alerts.push(a.texto));
+  cronogramaAtrasoAlertas(data.cronograma).forEach((a) => alerts.push(a.texto));
   return alerts;
 }
 
@@ -1610,6 +1613,7 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
   const [confirmDelete, setConfirmDelete] = useState(null); // { kind: "task" | "seg", id, label } | null
 
   const pesoTotal = cronogramaPesoTotal(data.tasks);
+  const alertasAtraso = cronogramaAtrasoAlertas(data);
   const curvaData = buildCurvaSData(data);
   const lastReal = [...data.seguimiento].filter((s) => s.fecha).sort((a, b) => a.fecha.localeCompare(b.fecha)).pop();
   const avanceHoy = cronogramaAvanceActual(data.tasks);
@@ -1682,6 +1686,17 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
           </button>
         </div>
       </div>
+
+      {alertasAtraso.length > 0 && (
+        <div style={styles.pagosAlertBox}>
+          <div style={styles.cardHead}><AlertTriangle size={16} color="#E8A33D" /><span>Actividades atrasadas</span></div>
+          <ul style={styles.alertList}>
+            {alertasAtraso.map((a, i) => (
+              <li key={i} style={{ ...styles.alertItem, color: a.tipo === "vencido" ? "#E2604F" : "#E8A33D" }}>{a.texto}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {showPaste && (
         <PasteCronogramaModal
@@ -2003,7 +2018,7 @@ function PasteCronogramaModal({ existingTasks, onClose, onImport }) {
 }
 
 
-function PresupuestoModule({ data, onChange, pagos }) {
+function PresupuestoModule({ data, onChange, pagos, projectName }) {
   const [activeSub, setActiveSub] = useState("base"); // "base" | "ejecucion"
   const [chartMode, setChartMode] = useState("categoria"); // "categoria" | "actividad"
   const totals = presupuestoTotals(data);
@@ -2224,7 +2239,7 @@ function PresupuestoModule({ data, onChange, pagos }) {
       )}
 
       {activeSub === "base" ? (
-        <PresupuestoTable items={data.base} onAdd={addBaseItem} onAddMany={addBaseItems} onUpdate={updateBaseItem} onDelete={deleteBaseItem} pagadoPorItem={pagadoPorItem} />
+        <PresupuestoTable items={data.base} onAdd={addBaseItem} onAddMany={addBaseItems} onUpdate={updateBaseItem} onDelete={deleteBaseItem} pagadoPorItem={pagadoPorItem} projectName={projectName} />
       ) : (
         <PresupuestoTable
           items={data.ejecucion}
@@ -2242,12 +2257,13 @@ function PresupuestoModule({ data, onChange, pagos }) {
   );
 }
 
-function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds, baseValoresPorItem, baseValoresPorCategoria, pagadoPorItem }) {
+function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds, baseValoresPorItem, baseValoresPorCategoria, pagadoPorItem, projectName }) {
   const [newItem, setNewItem] = useState({
     item: "", categoria: "", descripcion: "", cantidad: "", unidad: "",
     valorUnitario: "", ivaPct: "",
   });
   const [showPaste, setShowPaste] = useState(false);
+  const [showTemplateUpload, setShowTemplateUpload] = useState(false);
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null); // { id, label } | null
   // Filas bloqueadas por defecto (solo texto) para no dañar nada sin querer — hay que darle al
   // lápiz para poder editar valor/cantidad/nombre/categoría de un ítem ya creado.
@@ -2277,6 +2293,16 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
   return (
     <div>
       <div style={styles.pasteBtnRow}>
+        {projectName && (
+          <>
+            <button style={styles.pasteBtn} onClick={() => downloadPresupuestoTemplate(items, projectName)}>
+              <FileDown size={14} /> Descargar plantilla Excel
+            </button>
+            <button style={styles.pasteBtn} onClick={() => setShowTemplateUpload(true)}>
+              <FileUp size={14} /> Cargar plantilla Excel
+            </button>
+          </>
+        )}
         <button style={styles.pasteBtn} onClick={() => setShowPaste(true)}>
           <ClipboardPaste size={14} /> Pegar desde Excel
         </button>
@@ -2287,6 +2313,15 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
           onImport={(newItems) => {
             onAddMany(newItems);
             setShowPaste(false);
+          }}
+        />
+      )}
+      {showTemplateUpload && (
+        <PresupuestoTemplateModal
+          onClose={() => setShowTemplateUpload(false)}
+          onImport={(newItems) => {
+            onAddMany(newItems);
+            setShowTemplateUpload(false);
           }}
         />
       )}
@@ -2586,6 +2621,153 @@ async function downloadPagosTemplate(data, projectName) {
   a.download = `plantilla-pagos-${safeName}.xlsx`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+const PRESUPUESTO_ACCENT = "FF7FD08A"; // verde de la pestaña Presupuesto
+
+const PRESUPUESTO_COLUMNS = [
+  { header: "Ítem", key: "item", width: 10 },
+  { header: "Categoría / Descripción", key: "descripcion", width: 38 },
+  { header: "Cantidad", key: "cantidad", width: 12 },
+  { header: "Unidad", key: "unidad", width: 10 },
+  { header: "Valor unitario (antes de IVA)", key: "valorUnitario", width: 22 },
+  { header: "IVA %", key: "ivaPct", width: 10 },
+  { header: "Valor unitario (con IVA)", key: "valorUnitarioConIva", width: 22 },
+  { header: "Valor total", key: "valorTotal", width: 20 },
+  { header: "IVA recuperable (referencia)", key: "ivaRecuperable", width: 22 },
+];
+
+// Arma una fila por cada categoría (encabezado en negrilla, sin Cantidad/Unidad/Valor unitario)
+// seguida de sus ítems — igual a como ya se ve el presupuesto en la app. Si el proyecto no tiene
+// ítems todavía, arma una categoría y 2 ítems de ejemplo (en cursiva) para que se vea el formato.
+function buildPresupuestoSheetRows(items) {
+  if (!items || items.length === 0) {
+    return [
+      { item: "1", descripcion: "EQUIPOS PRINCIPALES", esCategoria: true, esEjemplo: true },
+      { item: "1.1", descripcion: "Paneles fotovoltaicos 710w", cantidad: 2230, unidad: "UND", valorUnitario: 318952, ivaPct: 0, esEjemplo: true },
+      { item: "1.2", descripcion: "Inversor 330kW", cantidad: 3, unidad: "UND", valorUnitario: 29000000, ivaPct: 0, esEjemplo: true },
+    ];
+  }
+  const grupos = groupPresupuestoItems(items);
+  const rows = [];
+  grupos.forEach((g, gi) => {
+    rows.push({ item: String(gi + 1), descripcion: g.categoria, esCategoria: true });
+    g.items.forEach((it) => {
+      rows.push({ item: it.item, descripcion: it.descripcion, cantidad: it.cantidad, unidad: it.unidad, valorUnitario: it.valorUnitario, ivaPct: it.ivaPct });
+    });
+  });
+  return rows;
+}
+
+async function downloadPresupuestoTemplate(items, projectName) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Control de Parques Solares";
+  wb.created = new Date();
+
+  const info = wb.addWorksheet("Instrucciones");
+  info.getColumn(1).width = 95;
+  info.addRow([`Plantilla de presupuesto — ${projectName || ""}`]).font = { bold: true, size: 15, color: { argb: PRESUPUESTO_ACCENT } };
+  info.addRow([]);
+  [
+    "Cómo llenar esta plantilla:",
+    "1. Ve a la pestaña \"Presupuesto\". Cada fila es un ítem del presupuesto.",
+    "2. Las filas de categoría (como \"1  EQUIPOS PRINCIPALES\") solo llevan Ítem y Descripción —",
+    "   deja vacías Cantidad/Unidad/Valor unitario/IVA en esas filas, así se detectan como categoría.",
+    "3. Los ítems van debajo de su categoría, con Cantidad, Unidad, Valor unitario (antes de IVA) e IVA %.",
+    "4. Escribe el IVA como número sin el símbolo % (por ejemplo 19, no 19%).",
+    "5. Las columnas \"Valor unitario (con IVA)\", \"Valor total\" e \"IVA recuperable\" se calculan solas —",
+    "   son de referencia mientras llenas, no hace falta tocarlas (no se leen al subir el archivo).",
+    "6. Borra las filas de ejemplo (en cursiva) antes de subir el archivo, si no las necesitas.",
+    "7. Al subir este archivo a la plataforma, los ítems se AGREGAN a la base del proyecto —",
+    "   no reemplazan los que ya existen.",
+  ].forEach((line, i) => {
+    const row = info.addRow([line]);
+    if (i === 0) row.font = { bold: true };
+  });
+
+  const ws = wb.addWorksheet("Presupuesto");
+  ws.columns = PRESUPUESTO_COLUMNS;
+  const rows = buildPresupuestoSheetRows(items);
+  rows.forEach((r) => {
+    const row = ws.addRow(r);
+    const n = row.number;
+    if (!r.esCategoria) {
+      row.getCell("valorUnitarioConIva").value = { formula: `E${n}*(1+F${n}/100)` };
+      row.getCell("valorTotal").value = { formula: `C${n}*G${n}` };
+      row.getCell("ivaRecuperable").value = { formula: `H${n}-C${n}*E${n}` };
+    } else {
+      row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8EDEF" } };
+    }
+    row.font = { bold: !!r.esCategoria, italic: !!r.esEjemplo, color: r.esEjemplo ? { argb: "FF7A8A93" } : undefined };
+  });
+
+  const headerRow = ws.getRow(1);
+  headerRow.height = 26;
+  headerRow.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: PRESUPUESTO_ACCENT } };
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  });
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  ws.autoFilter = { from: "A1", to: "I1" };
+
+  ws.getColumn("valorUnitario").numFmt = '"$"#,##0';
+  ws.getColumn("valorUnitarioConIva").numFmt = '"$"#,##0';
+  ws.getColumn("valorTotal").numFmt = '"$"#,##0';
+  ws.getColumn("ivaRecuperable").numFmt = '"$"#,##0';
+  ws.getColumn("ivaPct").numFmt = '0"%"';
+
+  const thin = { style: "thin", color: { argb: "FFDDDDDD" } };
+  for (let i = 1; i <= Math.max(rows.length + 1, 40); i++) {
+    ws.getRow(i).eachCell({ includeEmpty: true }, (cell) => {
+      cell.border = { top: thin, left: thin, bottom: thin, right: thin };
+    });
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const safeName = (projectName || "proyecto").replace(/[^a-z0-9]+/gi, "-");
+  a.download = `plantilla-presupuesto-${safeName}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Lee el .xlsx de presupuesto que suba la persona: detecta filas de categoría (Cantidad/Unidad/
+// Valor unitario vacíos) igual que "Pegar desde Excel", pero leyendo el archivo directo — evita
+// los problemas de copiar/pegar (columnas ocultas, autofiltro, formato del portapapeles).
+function parsePresupuestoWorkbook(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { cellDates: false });
+  const sheetName = wb.SheetNames.includes("Presupuesto") ? "Presupuesto" : wb.SheetNames[wb.SheetNames.length - 1];
+  const ws = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  const items = [];
+  let currentCategoria = "Sin categoría";
+  let skipped = 0;
+  rows.forEach((r) => {
+    const descripcion = String(r["Categoría / Descripción"] || "").trim();
+    if (!descripcion) { skipped++; return; }
+    const itemCode = String(r["Ítem"] || "").trim();
+    const cantidadRaw = r["Cantidad"];
+    const unidadRaw = String(r["Unidad"] || "").trim();
+    const valorRaw = r["Valor unitario (antes de IVA)"];
+    const ivaRaw = r["IVA %"];
+    const isGroupHeader = (cantidadRaw === "" || cantidadRaw === undefined) && !unidadRaw && (valorRaw === "" || valorRaw === undefined);
+    if (isGroupHeader) { currentCategoria = descripcion; return; }
+    items.push({
+      id: uid(),
+      item: itemCode,
+      categoria: currentCategoria,
+      descripcion,
+      cantidad: typeof cantidadRaw === "number" ? cantidadRaw : parseColombianNumber(cantidadRaw),
+      unidad: unidadRaw,
+      valorUnitario: typeof valorRaw === "number" ? valorRaw : parseColombianNumber(valorRaw),
+      ivaPct: typeof ivaRaw === "number" ? ivaRaw : (Number(ivaRaw) || 0),
+    });
+  });
+  return { items, skipped };
 }
 
 // Convierte lo que venga en la celda de fecha (texto, o fecha real de Excel) a "AAAA-MM-DD".
@@ -3290,6 +3472,73 @@ function PagosRangeExportModal({ onClose, onExport }) {
         <button style={{ ...styles.addProjectBtn, marginTop: 8 }} onClick={() => onExport({ from, to })}>
           Exportar
         </button>
+      </div>
+    </div>
+  );
+}
+
+function PresupuestoTemplateModal({ onClose, onImport }) {
+  const fileInputRef = useRef(null);
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState(null); // { items, skipped, categorias } | null
+  const [error, setError] = useState("");
+
+  const handleFile = async (file) => {
+    setFileName(file.name);
+    setError("");
+    setPreview(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const { items, skipped } = parsePresupuestoWorkbook(buf);
+      const categorias = Array.from(new Set(items.map((it) => it.categoria)));
+      setPreview({ items, skipped, categorias });
+    } catch (err) {
+      console.error("Error leyendo plantilla de presupuesto:", err);
+      setError(`No se pudo leer ese archivo. ¿Es un .xlsx válido? (${err?.message || "error desconocido"})`);
+    }
+  };
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.exportModal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Cargar plantilla de presupuesto</h3>
+          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+        </div>
+        <p style={styles.exportHint}>
+          Sube el archivo .xlsx que descargaste y llenaste. Los ítems se <strong>agregan</strong> a la
+          base de este proyecto — no reemplazan los que ya existen.
+        </p>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".xlsx,.xls"
+          style={{ display: "none" }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+        />
+        <button style={{ ...styles.addProjectBtn, marginTop: 4 }} onClick={() => fileInputRef.current?.click()}>
+          {fileName || "Elegir archivo…"}
+        </button>
+        {error && <div style={styles.importError}>{error}</div>}
+        {preview && (
+          <>
+            <div style={styles.pastePreview}>
+              Se detectaron <strong>{preview.items.length}</strong> ítems
+              {preview.categorias.length > 0 && <> en {preview.categorias.length} categorías ({preview.categorias.join(", ")})</>}.
+              {preview.skipped > 0 && <> Se ignoraron {preview.skipped} filas sin descripción.</>}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={styles.confirmCancelBtn} onClick={() => { setPreview(null); setFileName(""); }}>Elegir otro archivo</button>
+              <button
+                style={{ ...styles.addProjectBtn, opacity: preview.items.length ? 1 : 0.5 }}
+                disabled={!preview.items.length}
+                onClick={() => onImport(preview.items)}
+              >
+                Agregar {preview.items.length} ítems
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -4948,7 +5197,7 @@ const styles = {
   presReadonlyText: {
     display: "inline-block", padding: "5px 8px", fontSize: 11.5, fontFamily: FONT_BODY, color: "#C7D1D6",
   },
-  pasteBtnRow: { display: "flex", justifyContent: "flex-end", marginBottom: 10 },
+  pasteBtnRow: { display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 10 },
   pasteBtn: {
     display: "flex", alignItems: "center", gap: 6, background: "#1C242A", border: "1px solid #2A3339",
     color: "#E8EDEF", borderRadius: 8, padding: "7px 12px", fontSize: 12, cursor: "pointer",
