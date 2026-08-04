@@ -144,6 +144,88 @@ const ENERGIZACION_MILESTONES = ENERGIZACION_GROUPS.flatMap((g) =>
 const ENERGIZACION_TOTAL_COST = ENERGIZACION_MILESTONES.reduce((s, m) => s + m.cost, 0);
 
 /* ---------------------------------------------------------------------
+   DATA: Trámite de energización para proyectos >1MW (ante el CND, no ante el OR como el de
+   arriba) — transcrito del cronograma real de Filigrana (9.9 MWp), componente 8 completo
+   ("FPO y FIPPS", 8.1 Requisitos Generales, 8.2 Requisitos Adicionales).
+   'day' = día calendario desde el inicio del trámite (día 0 = registro del proyecto ante el CND).
+   No hay pesos de Curva S para este trámite (a diferencia del de arriba), así que cada actividad
+   pesa lo mismo (cost: 1) — el % de avance es simplemente actividades completadas / total.
+   La FPO de estos proyectos no se calcula (6+3 meses) sino que se digita a mano, ver fpoManual.
+--------------------------------------------------------------------- */
+const ENERGIZACION_GROUPS_MAYOR_1MW = [
+  { id: "fpo_fipps", label: "FPO y FIPPS", cat: "FPO_FIPPS", items: [
+    { title: "FIPPS", day: 207, cost: 1 },
+    { title: "COD", day: 298, cost: 1 },
+  ]},
+  { id: "req_gen", label: "8.1 Requisitos Generales", cat: "REQ_GEN", items: [
+    { title: "Registro del proyecto ante el CND e información básica", day: 0, cost: 1 },
+    { title: "Reunión de inicio", day: 22, cost: 1 },
+    { title: "Información técnica preliminar", day: 24, cost: 1 },
+    { title: "Ajuste y coordinación de protecciones - versión 1", day: 37, cost: 1 },
+    { title: "Revisión ajuste y coordinación de protecciones - versión 1", day: 88, cost: 1 },
+    { title: "Coordinar actividades para la incorporación del proyecto al SIN", day: 182, cost: 1 },
+    { title: "Supervisión y comunicaciones en el CND (VATIA)", day: 68, cost: 1 },
+    { title: "Ajuste y coordinación de protecciones - versión definitiva", day: 142, cost: 1 },
+    { title: "Aprobación ajuste y coordinación de protecciones - versión definitiva", day: 149, cost: 1 },
+    { title: "Agente generador (VATIA)", day: 2, cost: 1 },
+    { title: "Señales de SOE", day: 157, cost: 1 },
+    { title: "Señales de SCADA (VATIA/GUMAR)", day: 178, cost: 1 },
+    { title: "Comunicación cumplimiento EACP", day: 178, cost: 1 },
+    { title: "Pruebas de líneas telefónicas operativas (VATIA/GUMAR)", day: 193, cost: 1 },
+    { title: "Pruebas de supervisión simuladas con el CND", day: 200, cost: 1 },
+    { title: "Certificado de conexión y capacidad de transporte asignada (OR/VATIA)", day: 198, cost: 1 },
+    { title: "Fecha de inicio de Pruebas de Puesta en Servicio (FIPPS)", day: 199, cost: 1 },
+    { title: "Cronograma de pruebas de puesta en servicio", day: 203, cost: 1 },
+    { title: "Fronteras comerciales (VATIA)", day: 203, cost: 1 },
+    { title: "Disponibilidad de generación (VATIA)", day: 204, cost: 1 },
+    { title: "Información técnica definitiva", day: 294, cost: 1 },
+    { title: "Recepción adecuada de las señales de supervisión", day: 295, cost: 1 },
+    { title: "Resultados de pruebas cumplimiento capacidad de transporte", day: 295, cost: 1 },
+    { title: "Certificado Capacidad Efectiva Neta", day: 295, cost: 1 },
+    { title: "Coordinar con el CND fecha y hora de declaración de entrada en operación comercial", day: 295, cost: 1 },
+    { title: "Certificados de cumplimiento de la reglamentación vigente", day: 295, cost: 1 },
+    { title: "Declaración en operación comercial", day: 295, cost: 1 },
+    { title: "Ajustes de los dispositivos de protección implementados en sitio (StationWare)", day: 325, cost: 1 },
+  ]},
+  { id: "req_adi", label: "8.2 Requisitos Adicionales", cat: "REQ_ADI", items: [
+    { title: "Información técnica (modelos de conversión de recurso potencia)", day: 22, cost: 1 },
+    { title: "Modelo de red del SDL inicial (Operador de Red)", day: 22, cost: 1 },
+    { title: "Modelos de planta inicial de simulación RMS", day: 28, cost: 1 },
+    { title: "Modelos de planta preliminares de simulación RMS (nodo más cercano)", day: 116, cost: 1 },
+    { title: "Información fasorial", day: 116, cost: 1 },
+    { title: "Pruebas locales a los equipos de medición sincrofasorial", day: 178, cost: 1 },
+    { title: "Pruebas de comunicaciones a los equipos de medición sincrofasorial", day: 193, cost: 1 },
+    { title: "Informe de pruebas auditadas y concepto especializado del auditor", day: 296, cost: 1 },
+    { title: "Pruebas de coherencia de medidas de los equipos de medición sincrofasorial", day: 298, cost: 1 },
+    { title: "Modelos de simulación RMS detallados (herramienta del CND)", day: 326, cost: 1 },
+  ]},
+];
+
+const ENERGIZACION_MILESTONES_MAYOR_1MW = ENERGIZACION_GROUPS_MAYOR_1MW.flatMap((g) =>
+  g.items.map((it) => ({ ...it, cat: g.cat, group: g.label, groupId: g.id }))
+);
+const ENERGIZACION_TOTAL_COST_MAYOR_1MW = ENERGIZACION_MILESTONES_MAYOR_1MW.reduce((s, m) => s + m.cost, 0);
+const ENERGIZACION_DIAS_REF_MAYOR_1MW = Math.max(...ENERGIZACION_MILESTONES_MAYOR_1MW.map((m) => m.day));
+
+// >1 MWp usa el trámite ante el CND; 1 MWp o menos, el trámite ante el OR de siempre.
+function classifyEnergizacionTipo(capacity) {
+  const n = Number(String(capacity ?? "").replace(",", "."));
+  return Number.isFinite(n) && n > 1 ? "mayor1mw" : "menor1mw";
+}
+function energizacionGroupsFor(ener) {
+  return ener?.tipo === "mayor1mw" ? ENERGIZACION_GROUPS_MAYOR_1MW : ENERGIZACION_GROUPS;
+}
+function energizacionMilestonesFor(ener) {
+  return ener?.tipo === "mayor1mw" ? ENERGIZACION_MILESTONES_MAYOR_1MW : ENERGIZACION_MILESTONES;
+}
+function energizacionTotalCostFor(ener) {
+  return ener?.tipo === "mayor1mw" ? ENERGIZACION_TOTAL_COST_MAYOR_1MW : ENERGIZACION_TOTAL_COST;
+}
+function energizacionDiasRefFor(ener) {
+  return ener?.tipo === "mayor1mw" ? ENERGIZACION_DIAS_REF_MAYOR_1MW : 200;
+}
+
+/* ---------------------------------------------------------------------
    Plantilla de presupuesto base (de "presupuesto base.pdf"), para que un proyecto nuevo no
    empiece de cero. Item/Categoría/Descripción/Cantidad/Unidad/Valor unitario tal como en el PDF de
    referencia — el IVA no viene desglosado ahí, así que ivaPct siempre queda en 0 para ajustar
@@ -458,6 +540,9 @@ const CAT_STYLE = {
   Parque: { bg: "#16261B", fg: "#7FD08A", label: "Parque" },
   Carta: { bg: "#2E1520", fg: "#E77DA8", label: "Carta 9.x" },
   COD: { bg: "#2E1F0C", fg: "#F2C063", label: "COD" },
+  FPO_FIPPS: { bg: "#122A3A", fg: "#4FA8D8", label: "FPO y FIPPS" },
+  REQ_GEN: { bg: "#1C2A12", fg: "#8FBF4F", label: "Requisitos generales" },
+  REQ_ADI: { bg: "#241B3A", fg: "#A78BFA", label: "Requisitos adicionales" },
 };
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -470,6 +555,11 @@ const daysBetween = (isoStart, isoEnd) => {
 const addYears = (iso, n) => {
   const d = new Date(iso + "T00:00:00");
   d.setFullYear(d.getFullYear() + n);
+  return d.toISOString().slice(0, 10);
+};
+const addMonths = (iso, n) => {
+  const d = new Date(iso + "T00:00:00");
+  d.setMonth(d.getMonth() + n);
   return d.toISOString().slice(0, 10);
 };
 const fmtDate = (iso) => {
@@ -492,13 +582,18 @@ function emptyUpmeState() {
   return { steps };
 }
 
-function emptyEnergizacionState() {
+// tipo: "menor1mw" (trámite ante el OR, ≤1MW) | "mayor1mw" (trámite ante el CND, >1MW) — se decide
+// solo por la capacidad del proyecto al crearlo (ver classifyEnergizacionTipo). fpoManual solo
+// aplica a "mayor1mw": ahí la FPO no se calcula, se digita a mano.
+function emptyEnergizacionState(tipo = "menor1mw") {
   return {
     // Vacío a propósito: si se pusiera hoy por defecto, un proyecto recién creado ya "estaría
     // atrasado" el mismo día que se crea, antes de que nadie haya arrancado nada de verdad. Las
     // alertas de atraso solo empiezan cuando la persona asigna la fecha real de inicio de trámites.
     fechaInicio: "",
-    milestones: ENERGIZACION_MILESTONES.map(() => ({ done: false, fecha: "" })),
+    tipo,
+    fpoManual: "",
+    milestones: (tipo === "mayor1mw" ? ENERGIZACION_MILESTONES_MAYOR_1MW : ENERGIZACION_MILESTONES).map(() => ({ done: false, fecha: "" })),
   };
 }
 
@@ -962,6 +1057,26 @@ function cronogramaAvanceActual(tasks) {
   if (!pesoTotal) return 0;
   const avance = leaf.reduce((s, t) => s + (Number(t.peso) || 0) * (Number(t.pctCompletado) || 0) / 100, 0);
   return Math.round((avance / pesoTotal) * pesoTotal * 10) / 10; // = avance ponderado sobre 100
+}
+
+// Alerta única de cronograma para los resúmenes: compara la curva S (línea base esperada a hoy vs.
+// avance real de hoy) en vez de listar actividad por actividad — un solo número de qué tan atrás
+// vas, no el detalle de cuáles actividades específicas están atrasadas (eso se ve en la pestaña).
+function cronogramaCurvaSAlerta(cronograma, umbral = 5) {
+  const leaf = (cronograma?.tasks || []).filter((t) => !t.esGrupo);
+  if (leaf.length === 0) return null;
+  const hoy = todayISO();
+  const basePct = Math.round(leaf.reduce((sum, t) => {
+    if (!t.fechaInicio || !t.fechaFin) return sum;
+    return sum + (Number(t.peso) || 0) * fractionElapsed(t.fechaInicio, t.fechaFin, hoy);
+  }, 0));
+  const realPct = cronogramaAvanceActual(cronograma.tasks);
+  const brecha = Math.round(basePct - realPct);
+  if (brecha < umbral) return null;
+  return {
+    tipo: brecha >= 15 ? "vencido" : "atrasado",
+    texto: `Cronograma: avance real ${realPct}% vs. planeado ${basePct}% (${brecha} puntos de atraso).`,
+  };
 }
 
 // Parsea filas copiadas/pegadas desde MS Project (o Excel con las mismas columnas) para el cronograma.
@@ -1440,15 +1555,18 @@ function upmeNextStep(upme) {
   return active.find((s) => !upme.steps[s.id]?.completado) || null;
 }
 function energizacionProgress(ener) {
+  const milestones = energizacionMilestonesFor(ener);
+  const totalCost = energizacionTotalCostFor(ener);
   let doneCost = 0;
-  ENERGIZACION_MILESTONES.forEach((m, i) => {
+  milestones.forEach((m, i) => {
     if (ener.milestones[i]?.done) doneCost += m.cost;
   });
-  return ENERGIZACION_TOTAL_COST ? Math.round((doneCost / ENERGIZACION_TOTAL_COST) * 100) : 0;
+  return totalCost ? Math.round((doneCost / totalCost) * 100) : 0;
 }
 function nextEnergizacionMilestone(ener) {
+  const milestones = energizacionMilestonesFor(ener);
   let best = null;
-  ENERGIZACION_MILESTONES.forEach((m, i) => {
+  milestones.forEach((m, i) => {
     if (!ener.milestones[i]?.done) {
       if (!best || m.day < best.day) best = { ...m, idx: i };
     }
@@ -1460,11 +1578,40 @@ function nextEnergizacionMilestone(ener) {
   return { ...best, delayed: elapsed > best.day };
 }
 
+// Alerta de FPO. Para proyectos ≤1MW: la FPO se calcula sola (6 meses desde "Día 0", con prórroga
+// de 3 meses más). Para >1MW: la FPO no se calcula, se digita a mano (fpoManual) — el trámite ante
+// el CND no sigue esa regla de meses. En ambos casos avisa cuando faltan 30 días o menos, o si ya
+// venció, y no avisa si el proyecto ya quedó energizado al 100%.
+function energizacionFpoAlerta(ener, diasAviso = 30) {
+  if (!ener) return null;
+  if (energizacionProgress(ener) >= 100) return null;
+  const esMayor1mw = ener.tipo === "mayor1mw";
+  const fpoFecha = esMayor1mw ? (ener.fpoManual || null) : (ener.fechaInicio ? addMonths(ener.fechaInicio, 9) : null);
+  if (!fpoFecha) return null;
+  const etiqueta = esMayor1mw ? "la FPO" : "la FPO con prórroga";
+  const dias = daysBetween(todayISO(), fpoFecha);
+  if (dias < 0) {
+    return { tipo: "vencido", texto: `Energización: ${etiqueta} (${fmtDate(fpoFecha)}) venció hace ${Math.abs(dias)} día${Math.abs(dias) === 1 ? "" : "s"}.` };
+  }
+  if (dias <= diasAviso) {
+    return { tipo: "proximo", texto: `Energización: ${etiqueta} vence en ${dias} día${dias === 1 ? "" : "s"} (${fmtDate(fpoFecha)}).` };
+  }
+  return null;
+}
+
 export {
   UPME_STEPS,
   ENERGIZACION_GROUPS,
   ENERGIZACION_MILESTONES,
   ENERGIZACION_TOTAL_COST,
+  ENERGIZACION_GROUPS_MAYOR_1MW,
+  ENERGIZACION_MILESTONES_MAYOR_1MW,
+  ENERGIZACION_TOTAL_COST_MAYOR_1MW,
+  classifyEnergizacionTipo,
+  energizacionGroupsFor,
+  energizacionMilestonesFor,
+  energizacionTotalCostFor,
+  energizacionDiasRefFor,
   PRESUPUESTO_BASE_TEMPLATE,
   buildPresupuestoBaseFromTemplate,
   CRONOGRAMA_BASE_TEMPLATE,
@@ -1475,6 +1622,7 @@ export {
   todayISO,
   daysBetween,
   addYears,
+  addMonths,
   fmtDate,
   fmtTime,
   fmtDateTime,
@@ -1499,6 +1647,7 @@ export {
   fractionElapsed,
   cronogramaPesoTotal,
   cronogramaAtrasoAlertas,
+  cronogramaCurvaSAlerta,
   captureCronogramaBaseline,
   buildCurvaSData,
   parseProjectDate,
@@ -1518,6 +1667,7 @@ export {
   upmeNextStep,
   energizacionProgress,
   nextEnergizacionMilestone,
+  energizacionFpoAlerta,
   presupuestoTotals,
   presupuestoListTotal,
   groupPresupuestoItems,

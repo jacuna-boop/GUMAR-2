@@ -14,17 +14,18 @@ import Login from "./components/Login";
 import CronogramaGantt from "./components/CronogramaGantt";
 import gumarLogo from "./assets/gumar-logo.jpg";
 import {
-  UPME_STEPS, ENERGIZACION_GROUPS, ENERGIZACION_MILESTONES, ENERGIZACION_TOTAL_COST,
-  CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, fmtDate, fmtTime, fmtDateTime,
+  UPME_STEPS,
+  CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, addMonths, fmtDate, fmtTime, fmtDateTime,
   emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyPresupuestoState, emptyPagosState,
   emptyBalanceState, balanceTotals, balanceMargenTotals, balanceFlujoCaja, balanceHitosAlertas,
-  cronogramaAtrasoAlertas,
+  cronogramaAtrasoAlertas, cronogramaCurvaSAlerta,
   clonePresupuestoState, cloneCronogramaState, clonePagosState, cloneBalanceState, cloneUpmeState, cloneEnergizacionState,
   emptyProjectData, ensureFullProjectData, buildPresupuestoBaseFromTemplate, buildCronogramaBaseFromTemplate,
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData,
   parseCronogramaPaste, cronogramaAvanceActual, matchCronogramaTasks, applyCronogramaMerge,
   parsePredecesoras, computeCronogramaSchedule, parseProjectDate,
-  upmeProgress, upmeActiveSteps, upmeNextStep, energizacionProgress, nextEnergizacionMilestone,
+  upmeProgress, upmeActiveSteps, upmeNextStep, energizacionProgress, nextEnergizacionMilestone, energizacionFpoAlerta,
+  classifyEnergizacionTipo, energizacionGroupsFor, energizacionDiasRefFor,
   presupuestoTotals, presupuestoListTotal, groupPresupuestoItems, calcPresupuestoItem, parsePresupuestoPaste,
   parseColombianNumber,
   ordenPagado, ordenProgramado, ordenSaldo, pagosTotals, pagosProximosAlertas, fmtMoney,
@@ -298,6 +299,8 @@ function Dashboard({ session }) {
       ...emptyProjectData(),
       presupuesto: buildPresupuestoBaseFromTemplate(),
       cronograma: buildCronogramaBaseFromTemplate(),
+      // >1MWp usa el trámite de energización ante el CND en vez del trámite ante el OR de siempre.
+      energizacion: emptyEnergizacionState(classifyEnergizacionTipo(capacity)),
     };
     if (cloneFrom?.sourceProjectId) {
       const { data: srcRow } = await supabase.from("project_data").select("*").eq("project_id", cloneFrom.sourceProjectId).maybeSingle();
@@ -1067,6 +1070,11 @@ function TabBtn({ active, onClick, icon, label }) {
    Resumen
 --------------------------------------------------------------------- */
 
+// Cada alerta trae su módulo de origen ("modulo") además del texto — así el Resumen general puede
+// mostrar solo "Presupuesto (1) · Cronograma (12)" sin el detalle, y el Resumen del proyecto puede
+// seguir mostrando el texto completo. Cronograma es la excepción: como puede generar una alerta por
+// cada actividad atrasada (fácilmente decenas), se condensa a una sola línea con el conteo incluso
+// en el Resumen del proyecto — los demás módulos siguen mostrando cada alerta tal cual.
 function buildProjectAlerts(data) {
   const nextMs = nextEnergizacionMilestone(data.energizacion);
   const elapsed = data.energizacion.fechaInicio ? daysBetween(data.energizacion.fechaInicio, todayISO()) : null;
@@ -1074,17 +1082,20 @@ function buildProjectAlerts(data) {
   const pagTotals = pagosTotals(data.pagos);
   const alerts = [];
   if (nextMs && nextMs.delayed) {
-    alerts.push(`Energización: el hito "${nextMs.title}" está previsto para el día ${nextMs.day} y ya vas en el día ${elapsed}.`);
+    alerts.push({ modulo: "Energización", texto: `Energización: el hito "${nextMs.title}" está previsto para el día ${nextMs.day} y ya vas en el día ${elapsed}.` });
   }
+  const fpoAlerta = energizacionFpoAlerta(data.energizacion);
+  if (fpoAlerta) alerts.push({ modulo: "Energización", texto: fpoAlerta.texto });
   if (presTotals.diferencia > 0) {
-    alerts.push(`Presupuesto: la ejecución supera la base en ${fmtMoney(presTotals.diferencia)} (${presTotals.pct}%).`);
+    alerts.push({ modulo: "Presupuesto", texto: `Presupuesto: la ejecución supera la base en ${fmtMoney(presTotals.diferencia)} (${presTotals.pct}%).` });
   }
   if (pagTotals.totalSaldo > 0) {
-    alerts.push(`Pagos: hay ${fmtMoney(pagTotals.totalSaldo)} en saldo pendiente por pagar.`);
+    alerts.push({ modulo: "Pagos", texto: `Pagos: hay ${fmtMoney(pagTotals.totalSaldo)} en saldo pendiente por pagar.` });
   }
-  pagosProximosAlertas(data.pagos).forEach((a) => alerts.push(a.texto));
-  balanceHitosAlertas(data.balance).forEach((a) => alerts.push(a.texto));
-  cronogramaAtrasoAlertas(data.cronograma).forEach((a) => alerts.push(a.texto));
+  pagosProximosAlertas(data.pagos).forEach((a) => alerts.push({ modulo: "Pagos", texto: a.texto }));
+  balanceHitosAlertas(data.balance).forEach((a) => alerts.push({ modulo: "Balance financiero", texto: a.texto }));
+  const curvaSAlerta = cronogramaCurvaSAlerta(data.cronograma);
+  if (curvaSAlerta) alerts.push({ modulo: "Cronograma", texto: curvaSAlerta.texto });
   return alerts;
 }
 
@@ -1193,7 +1204,7 @@ function Resumen({ data, setTab }) {
         ) : (
           <ul style={styles.alertList}>
             {alerts.map((a, i) => (
-              <li key={i} style={styles.alertItem}>{a}</li>
+              <li key={i} style={styles.alertItem}>{a.texto}</li>
             ))}
           </ul>
         )}
@@ -1281,22 +1292,26 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
           <div style={styles.cardSub}>Sin alertas por ahora.</div>
         ) : (
           <div style={styles.alertsByProjectList}>
-            {projectsWithAlerts.map(({ project: p, alerts }) => (
-              <div key={p.id} style={styles.alertsByProjectGroup}>
-                <div
-                  style={styles.alertsByProjectName}
-                  role="button"
-                  onClick={() => onOpenProject(p.id, "resumen")}
-                >
-                  {p.name}
+            {projectsWithAlerts.map(({ project: p, alerts }) => {
+              const counts = new Map();
+              alerts.forEach((a) => counts.set(a.modulo, (counts.get(a.modulo) || 0) + 1));
+              return (
+                <div key={p.id} style={styles.alertsByProjectGroup}>
+                  <div
+                    style={styles.alertsByProjectName}
+                    role="button"
+                    onClick={() => onOpenProject(p.id, "resumen")}
+                  >
+                    {p.name}
+                  </div>
+                  <div style={styles.alertModuloTagRow}>
+                    {Array.from(counts.entries()).map(([modulo, count]) => (
+                      <span key={modulo} style={styles.alertModuloTag}>{modulo} ({count})</span>
+                    ))}
+                  </div>
                 </div>
-                <ul style={styles.alertList}>
-                  {alerts.map((a, i) => (
-                    <li key={i} style={styles.alertItem}>{a}</li>
-                  ))}
-                </ul>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -1495,7 +1510,13 @@ function UpmeModule({ data, onChange, projectId, isLector }) {
    Energización module
 --------------------------------------------------------------------- */
 function EnergizacionModule({ data, onChange, projectId, isLector }) {
+  const esMayor1mw = data.tipo === "mayor1mw";
+  const groups = energizacionGroupsFor(data);
+  const diasRef = energizacionDiasRefFor(data);
   const elapsed = data.fechaInicio ? daysBetween(data.fechaInicio, todayISO()) : null;
+  const fpo = data.fechaInicio ? addMonths(data.fechaInicio, 6) : null;
+  const fpoProrroga = data.fechaInicio ? addMonths(data.fechaInicio, 9) : null;
+  const fpoAlerta = energizacionFpoAlerta(data);
   let cursor = 0;
 
   const toggleDone = (idx) => {
@@ -1520,15 +1541,46 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
           />
         </label>
         <div style={styles.dayCounter}>
-          {elapsed === null ? "Asigna la fecha de inicio para empezar a contar días" : (<>Día <strong>{elapsed}</strong> de 200</>)}
+          {elapsed === null ? "Asigna la fecha de inicio para empezar a contar días" : (<>Día <strong>{elapsed}</strong> de {diasRef}</>)}
         </div>
         <div style={styles.dayCounter}>
-          Avance ponderado por costo: <strong style={{ color: "#F5B942" }}>{overallPct}%</strong>
+          {esMayor1mw ? "Avance" : "Avance ponderado por costo"}: <strong style={{ color: "#F5B942" }}>{overallPct}%</strong>
         </div>
-        <Legend />
+        {esMayor1mw ? (
+          <label style={styles.dateField}>
+            <span>FPO (manual — trámite ante el CND)</span>
+            <input
+              type="date"
+              value={data.fpoManual || ""}
+              onChange={(e) => onChange({ ...data, fpoManual: e.target.value })}
+              style={styles.input}
+            />
+          </label>
+        ) : (
+          <>
+            <div style={styles.dateField}>
+              <span>FPO (6 meses)</span>
+              <div style={{ ...styles.input, fontWeight: 700, color: "#F5B942" }}>{fpo ? fmtDate(fpo) : "—"}</div>
+            </div>
+            <div style={styles.dateField}>
+              <span>FPO con prórroga (9 meses)</span>
+              <div style={{ ...styles.input, fontWeight: 700, color: "#E2604F" }}>{fpoProrroga ? fmtDate(fpoProrroga) : "—"}</div>
+            </div>
+          </>
+        )}
+        <Legend groups={groups} />
       </div>
 
-      {ENERGIZACION_GROUPS.map((g) => {
+      {fpoAlerta && (
+        <div style={styles.pagosAlertBox}>
+          <div style={styles.cardHead}><AlertTriangle size={16} color="#E8A33D" /><span>FPO</span></div>
+          <ul style={styles.alertList}>
+            <li style={{ ...styles.alertItem, color: fpoAlerta.tipo === "vencido" ? "#E2604F" : "#E8A33D" }}>{fpoAlerta.texto}</li>
+          </ul>
+        </div>
+      )}
+
+      {groups.map((g) => {
         const groupStart = cursor;
         cursor += g.items.length;
         const groupCost = g.items.reduce((s, it) => s + it.cost, 0);
@@ -1560,7 +1612,7 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
             <div style={styles.wbsItems}>
               {g.items.map((it, j) => {
                 const i = groupStart + j;
-                const state = data.milestones[i];
+                const state = data.milestones[i] || { done: false, fecha: "" };
                 const delayed = !state.done && elapsed !== null && elapsed > it.day;
                 return (
                   <div
@@ -3610,14 +3662,21 @@ function PagosTemplateModal({ onClose, onImport }) {
   );
 }
 
-function Legend() {
+// Sin "groups" muestra todas las categorías (comportamiento de siempre); con "groups" (ver
+// EnergizacionModule) solo muestra las categorías que ese trámite en concreto usa.
+function Legend({ groups }) {
+  const cats = groups ? Array.from(new Set(groups.map((g) => g.cat))) : Object.keys(CAT_STYLE);
   return (
     <div style={styles.legend}>
-      {Object.entries(CAT_STYLE).map(([k, v]) => (
-        <span key={k} style={{ ...styles.legendItem, color: v.fg }}>
-          ● {v.label}
-        </span>
-      ))}
+      {cats.map((k) => {
+        const v = CAT_STYLE[k];
+        if (!v) return null;
+        return (
+          <span key={k} style={{ ...styles.legendItem, color: v.fg }}>
+            ● {v.label}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -4404,7 +4463,7 @@ function PrintResumenProject({ project, data }) {
             <div style={prCard.cardSub}>Sin alertas por ahora.</div>
           ) : (
             <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {alerts.map((a, i) => <li key={i} style={prCard.alertItem}>{a}</li>)}
+              {alerts.map((a, i) => <li key={i} style={prCard.alertItem}>{a.texto}</li>)}
             </ul>
           )}
         </div>
@@ -4568,9 +4627,26 @@ function PrintUpmeContent({ data }) {
 
 function PrintEnergizacionContent({ data }) {
   let cursor = 0;
+  const esMayor1mw = data.tipo === "mayor1mw";
+  const groups = energizacionGroupsFor(data);
+  const fpo = data.fechaInicio ? addMonths(data.fechaInicio, 6) : null;
+  const fpoProrroga = data.fechaInicio ? addMonths(data.fechaInicio, 9) : null;
   return (
     <div>
-      {ENERGIZACION_GROUPS.map((g) => {
+      {esMayor1mw ? (
+        data.fpoManual && (
+          <div style={{ ...prCard.cardSub, marginBottom: 10 }}>
+            FPO: {fmtDate(data.fpoManual)}
+          </div>
+        )
+      ) : (
+        data.fechaInicio && (
+          <div style={{ ...prCard.cardSub, marginBottom: 10 }}>
+            FPO (6 meses): {fmtDate(fpo)} · FPO con prórroga (9 meses): {fmtDate(fpoProrroga)}
+          </div>
+        )
+      )}
+      {groups.map((g) => {
         const start = cursor;
         cursor += g.items.length;
         const groupCost = g.items.reduce((s, it) => s + it.cost, 0);
@@ -4994,6 +5070,11 @@ const styles = {
   alertsByProjectGroup: {},
   alertsByProjectName: {
     fontSize: 13, fontWeight: 700, color: "#E8EDEF", marginBottom: 6, cursor: "pointer", width: "fit-content",
+  },
+  alertModuloTagRow: { display: "flex", flexWrap: "wrap", gap: 6 },
+  alertModuloTag: {
+    fontSize: 11, fontWeight: 600, color: "#E8A33D", background: "#2A2013",
+    border: "1px solid #4A3820", borderRadius: 20, padding: "3px 10px",
   },
 
   timelineStrip: { display: "flex", alignItems: "center", overflowX: "auto", padding: "6px 2px 18px" },
