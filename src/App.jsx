@@ -18,6 +18,7 @@ import {
   CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, addMonths, fmtDate, fmtTime, fmtDateTime,
   emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyPresupuestoState, emptyPagosState,
   emptyBalanceState, balanceTotals, balanceMargenTotals, balanceFlujoCaja, balanceHitosAlertas,
+  emptyProyectoInfoState, buildEnergizacionCurvaSData, buildCortesObra,
   cronogramaAtrasoAlertas, cronogramaCurvaSAlerta,
   clonePresupuestoState, cloneCronogramaState, clonePagosState, cloneBalanceState, cloneUpmeState, cloneEnergizacionState,
   emptyProjectData, ensureFullProjectData, buildPresupuestoBaseFromTemplate, buildCronogramaBaseFromTemplate,
@@ -120,11 +121,11 @@ function Dashboard({ session }) {
       const { data, error } = await supabase.from("project_data").select("*").eq("project_id", id).maybeSingle();
       if (error) throw error;
       if (data) {
-        setProjectData((prev) => ({ ...prev, [id]: ensureFullProjectData({ upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos, balance: data.balance }) }));
+        setProjectData((prev) => ({ ...prev, [id]: ensureFullProjectData({ upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos, balance: data.balance, info: data.info }) }));
       } else {
         const fresh = emptyProjectData();
         await supabase.from("project_data").insert({
-          project_id: id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, balance: fresh.balance, updated_by: user.id,
+          project_id: id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, balance: fresh.balance, info: fresh.info, updated_by: user.id,
         });
         setProjectData((prev) => ({ ...prev, [id]: fresh }));
       }
@@ -185,6 +186,7 @@ function Dashboard({ session }) {
         presupuesto: data.presupuesto,
         pagos: data.pagos,
         balance: data.balance,
+        info: data.info,
         updated_at: new Date().toISOString(),
         updated_by: user.id,
       })
@@ -220,7 +222,7 @@ function Dashboard({ session }) {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      const snapshot = { upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos, balance: data.balance };
+      const snapshot = { upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos, balance: data.balance, info: data.info };
       if (recent && recent.updated_by === user.id && recent.created_at > cutoff) {
         await supabase.from("project_history").update({ data: snapshot, created_at: new Date().toISOString() }).eq("id", recent.id);
       } else {
@@ -314,7 +316,7 @@ function Dashboard({ session }) {
       if (mods.balance) fresh.balance = cloneBalanceState(src.balance);
     }
     await supabase.from("project_data").insert({
-      project_id: newProject.id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, balance: fresh.balance, updated_by: user.id,
+      project_id: newProject.id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, balance: fresh.balance, info: fresh.info, updated_by: user.id,
     });
     setProjectData((prev) => ({ ...prev, [newProject.id]: fresh }));
     setSelectedId(newProject.id);
@@ -506,7 +508,11 @@ function Dashboard({ session }) {
                 {!data ? (
                   <div style={{ color: "#8B9AA3", padding: 40 }}>Cargando proyecto…</div>
                 ) : tab === "resumen" ? (
-                  <Resumen data={data} setTab={setTab} />
+                  <Resumen
+                    data={data}
+                    setTab={setTab}
+                    onChangeInfo={(nextInfo) => updateProjectData(selectedId, (cur) => ({ ...cur, info: nextInfo }))}
+                  />
                 ) : tab === "upme" ? (
                   <UpmeModule
                     data={data.upme}
@@ -1099,7 +1105,7 @@ function buildProjectAlerts(data) {
   return alerts;
 }
 
-function Resumen({ data, setTab }) {
+function Resumen({ data, setTab, onChangeInfo }) {
   const upmePct = upmeProgress(data.upme);
   const enerPct = energizacionProgress(data.energizacion);
   const nextMs = nextEnergizacionMilestone(data.energizacion);
@@ -1209,7 +1215,145 @@ function Resumen({ data, setTab }) {
           </ul>
         )}
       </div>
+
+      {onChangeInfo && <ProyectoInfoSection info={data.info} pagos={data.pagos} onChange={onChangeInfo} />}
     </div>
+  );
+}
+
+// Info para el informe semanal PP-I-01: equipo de trabajo, ficha técnica de equipos, y cortes de
+// obra (derivados de los proveedores de Pagos, marcando cuáles cuentan como contratista).
+function ProyectoInfoSection({ info, pagos, onChange }) {
+  const [newMiembro, setNewMiembro] = useState({ cargo: "", nombre: "" });
+
+  const addMiembro = () => {
+    if (!newMiembro.cargo.trim() && !newMiembro.nombre.trim()) return;
+    onChange({ ...info, equipo: [...info.equipo, { id: uid(), ...newMiembro }] });
+    setNewMiembro({ cargo: "", nombre: "" });
+  };
+  const updateMiembro = (id, patch) => onChange({ ...info, equipo: info.equipo.map((m) => (m.id === id ? { ...m, ...patch } : m)) });
+  const deleteMiembro = (id) => onChange({ ...info, equipo: info.equipo.filter((m) => m.id !== id) });
+
+  const updateFicha = (grupo, campo, val) => {
+    onChange({ ...info, fichaTecnica: { ...info.fichaTecnica, [grupo]: { ...info.fichaTecnica[grupo], [campo]: val } } });
+  };
+
+  const proveedores = Array.from(new Set((pagos?.ordenes || []).map((o) => (o.proveedor || "").trim()).filter(Boolean)));
+  const contratistasMap = new Map((info.cortesObra.contratistas || []).map((c) => [c.proveedor, c]));
+  const toggleContratista = (proveedor, checked) => {
+    const existing = contratistasMap.get(proveedor);
+    const next = existing
+      ? info.cortesObra.contratistas.map((c) => (c.proveedor === proveedor ? { ...c, incluir: checked } : c))
+      : [...info.cortesObra.contratistas, { id: uid(), proveedor, incluir: checked, reteobra: 0 }];
+    onChange({ ...info, cortesObra: { contratistas: next } });
+  };
+  const updateReteobra = (proveedor, reteobra) => {
+    onChange({ ...info, cortesObra: { contratistas: info.cortesObra.contratistas.map((c) => (c.proveedor === proveedor ? { ...c, reteobra } : c)) } });
+  };
+  const cortes = buildCortesObra(pagos, info.cortesObra);
+  const fichaLabel = { fontSize: 11, fontWeight: 700, color: "#7A8A93", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 };
+  const fichaField = { ...styles.miniInput, marginBottom: 6 };
+
+  return (
+    <>
+      <div style={{ ...styles.card, gridColumn: "1 / -1" }}>
+        <div style={styles.cardHead}><Users size={16} color="#4FA8D8" /><span>Equipo de trabajo</span></div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+          {info.equipo.map((m) => (
+            <div key={m.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input style={{ ...styles.miniInput, flex: 1 }} placeholder="Cargo" value={m.cargo} onChange={(e) => updateMiembro(m.id, { cargo: e.target.value })} />
+              <input style={{ ...styles.miniInput, flex: 1 }} placeholder="Nombre" value={m.nombre} onChange={(e) => updateMiembro(m.id, { nombre: e.target.value })} />
+              <button style={styles.rowDeleteBtn} onClick={() => deleteMiembro(m.id)}><Trash2 size={13} /></button>
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input style={{ ...styles.miniInput, flex: 1 }} placeholder="Cargo (ej. Residente de obra)" value={newMiembro.cargo} onChange={(e) => setNewMiembro({ ...newMiembro, cargo: e.target.value })} />
+            <input style={{ ...styles.miniInput, flex: 1 }} placeholder="Nombre" value={newMiembro.nombre} onChange={(e) => setNewMiembro({ ...newMiembro, nombre: e.target.value })} />
+            <button style={styles.addRowBtn} onClick={addMiembro}><Plus size={14} /></button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...styles.card, gridColumn: "1 / -1" }}>
+        <div style={styles.cardHead}><FileCheck size={16} color="#7FD08A" /><span>Ficha técnica</span></div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginTop: 10 }}>
+          <div>
+            <div style={fichaLabel}>Paneles solares</div>
+            <input style={fichaField} placeholder="Cantidad" value={info.fichaTecnica.paneles.cantidad} onChange={(e) => updateFicha("paneles", "cantidad", e.target.value)} />
+            <input style={fichaField} placeholder="Potencia (Wp)" value={info.fichaTecnica.paneles.potenciaWp} onChange={(e) => updateFicha("paneles", "potenciaWp", e.target.value)} />
+            <input style={fichaField} placeholder="Marca" value={info.fichaTecnica.paneles.marca} onChange={(e) => updateFicha("paneles", "marca", e.target.value)} />
+            <input style={fichaField} placeholder="Referencia" value={info.fichaTecnica.paneles.referencia} onChange={(e) => updateFicha("paneles", "referencia", e.target.value)} />
+          </div>
+          <div>
+            <div style={fichaLabel}>Inversores</div>
+            <input style={fichaField} placeholder="Cantidad" value={info.fichaTecnica.inversores.cantidad} onChange={(e) => updateFicha("inversores", "cantidad", e.target.value)} />
+            <input style={fichaField} placeholder="Capacidad" value={info.fichaTecnica.inversores.capacidad} onChange={(e) => updateFicha("inversores", "capacidad", e.target.value)} />
+            <input style={fichaField} placeholder="Marca" value={info.fichaTecnica.inversores.marca} onChange={(e) => updateFicha("inversores", "marca", e.target.value)} />
+            <input style={fichaField} placeholder="Referencia" value={info.fichaTecnica.inversores.referencia} onChange={(e) => updateFicha("inversores", "referencia", e.target.value)} />
+          </div>
+          <div>
+            <div style={fichaLabel}>Transformador</div>
+            <input style={fichaField} placeholder="Tipo" value={info.fichaTecnica.transformador.tipo} onChange={(e) => updateFicha("transformador", "tipo", e.target.value)} />
+            <input style={fichaField} placeholder="Marca" value={info.fichaTecnica.transformador.marca} onChange={(e) => updateFicha("transformador", "marca", e.target.value)} />
+          </div>
+          <div>
+            <div style={fichaLabel}>Estructura — mesas</div>
+            <input style={fichaField} placeholder="Configuración" value={info.fichaTecnica.estructura.configuracion} onChange={(e) => updateFicha("estructura", "configuracion", e.target.value)} />
+            <input style={fichaField} placeholder="Cantidad" value={info.fichaTecnica.estructura.cantidad} onChange={(e) => updateFicha("estructura", "cantidad", e.target.value)} />
+            <input style={fichaField} placeholder="Proveedor" value={info.fichaTecnica.estructura.proveedor} onChange={(e) => updateFicha("estructura", "proveedor", e.target.value)} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...styles.card, gridColumn: "1 / -1" }}>
+        <div style={styles.cardHead}><Wallet size={16} color="#E77DA8" /><span>Cortes de obra</span></div>
+        <p style={styles.exportHint}>Marca qué proveedores de Pagos cuentan como contratista de obra, y digita su retención (reteobra).</p>
+        {proveedores.length === 0 ? (
+          <div style={styles.cardSub}>Todavía no hay proveedores registrados en Pagos.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+            {proveedores.map((prov) => {
+              const c = contratistasMap.get(prov);
+              return (
+                <div key={prov} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={!!c?.incluir} onChange={(e) => toggleContratista(prov, e.target.checked)} />
+                  <span style={{ flex: 1, fontSize: 12.5, color: "#E8EDEF" }}>{prov}</span>
+                  {c?.incluir && (
+                    <MoneyInput style={{ ...styles.miniInput, width: 140 }} placeholder="Reteobra" value={c.reteobra} onChange={(val) => updateReteobra(prov, val)} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {cortes.length > 0 && (
+          <div style={styles.cronoTableWrap}>
+            <table style={styles.overviewTable}>
+              <thead>
+                <tr>
+                  <th style={styles.ovTh}>Contratista</th>
+                  <th style={styles.ovTh}># de corte</th>
+                  <th style={styles.ovTh}>Vr acumulado</th>
+                  <th style={styles.ovTh}>Reteobra</th>
+                  <th style={styles.ovTh}>Saldo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cortes.map((c) => (
+                  <tr key={c.proveedor}>
+                    <td style={styles.ovTd}>{c.proveedor}</td>
+                    <td style={styles.ovTd}>{c.numCortes}</td>
+                    <td style={styles.ovTd}>{fmtMoney(c.vrAcumulado)}</td>
+                    <td style={styles.ovTd}>{fmtMoney(c.reteobra)}</td>
+                    <td style={{ ...styles.ovTd, fontWeight: 700 }}>{fmtMoney(c.saldo)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -1517,6 +1661,7 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
   const fpo = data.fechaInicio ? addMonths(data.fechaInicio, 6) : null;
   const fpoProrroga = data.fechaInicio ? addMonths(data.fechaInicio, 9) : null;
   const fpoAlerta = energizacionFpoAlerta(data);
+  const curvaSData = buildEnergizacionCurvaSData(data);
   let cursor = 0;
 
   const toggleDone = (idx) => {
@@ -1577,6 +1722,23 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
           <ul style={styles.alertList}>
             <li style={{ ...styles.alertItem, color: fpoAlerta.tipo === "vencido" ? "#E2604F" : "#E8A33D" }}>{fpoAlerta.texto}</li>
           </ul>
+        </div>
+      )}
+
+      {curvaSData.length > 0 && (
+        <div style={styles.chartBox}>
+          <div style={styles.cardHead}><Zap size={16} color="#F5B942" /><span>Curva S de energización</span></div>
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={curvaSData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
+              <XAxis dataKey="label" tick={{ fill: "#7A8A93", fontSize: 10 }} />
+              <YAxis domain={[0, 100]} tick={{ fill: "#7A8A93", fontSize: 10 }} unit="%" />
+              <Tooltip contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }} />
+              <RLegend wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="base" name="Línea base" stroke="#4FA8D8" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="real" name="Avance real" stroke="#F5B942" strokeWidth={2} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       )}
 

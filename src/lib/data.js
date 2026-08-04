@@ -684,6 +684,24 @@ function cloneEnergizacionState(energizacion) {
   return energizacion ? JSON.parse(JSON.stringify(energizacion)) : emptyEnergizacionState();
 }
 
+// Datos para el informe semanal PP-I-01 (control presupuestal y cronograma): equipo de trabajo,
+// ficha técnica de equipos, y qué proveedores de Pagos cuentan como "contratista de obra" para el
+// corte de obra (con su retención, que no se calcula de nada — se digita a mano).
+function emptyProyectoInfoState() {
+  return {
+    equipo: [], // { id, cargo, nombre }
+    fichaTecnica: {
+      paneles: { cantidad: "", potenciaWp: "", marca: "", referencia: "" },
+      inversores: { cantidad: "", capacidad: "", marca: "", referencia: "" },
+      transformador: { tipo: "", marca: "" },
+      estructura: { configuracion: "", cantidad: "", proveedor: "" },
+    },
+    cortesObra: {
+      contratistas: [], // { id, proveedor, incluir, reteobra } — proveedor debe calzar con Pagos > proveedor
+    },
+  };
+}
+
 function emptyProjectData() {
   return {
     upme: emptyUpmeState(),
@@ -692,6 +710,7 @@ function emptyProjectData() {
     presupuesto: emptyPresupuestoState(),
     pagos: emptyPagosState(),
     balance: emptyBalanceState(),
+    info: emptyProyectoInfoState(),
   };
 }
 
@@ -728,7 +747,16 @@ function ensureFullProjectData(data) {
   const rawEner = data?.energizacion;
   const energizacion = rawEner && Array.isArray(rawEner.milestones) ? rawEner : emptyEnergizacionState();
 
-  return { upme, energizacion, cronograma, presupuesto, pagos, balance };
+  const rawInfo = data?.info;
+  const info = rawInfo && Array.isArray(rawInfo.equipo)
+    ? {
+        equipo: rawInfo.equipo,
+        fichaTecnica: { ...emptyProyectoInfoState().fichaTecnica, ...(rawInfo.fichaTecnica || {}) },
+        cortesObra: { contratistas: Array.isArray(rawInfo.cortesObra?.contratistas) ? rawInfo.cortesObra.contratistas : [] },
+      }
+    : emptyProyectoInfoState();
+
+  return { upme, energizacion, cronograma, presupuesto, pagos, balance, info };
 }
 
 // Totales del balance financiero: ingresos reales (hitos ya pagados), plata que sale (pagos
@@ -1578,6 +1606,65 @@ function nextEnergizacionMilestone(ener) {
   return { ...best, delayed: elapsed > best.day };
 }
 
+// Curva S de energización: % base (según el "día esperado" de cada hito, contado desde "Día 0")
+// vs % real (según la fecha en que se marcó cada hito como hecho) — se arma sola con los datos que
+// ya hay, sin necesidad de un registro de seguimiento aparte (a diferencia de Cronograma).
+function buildEnergizacionCurvaSData(ener) {
+  if (!ener?.fechaInicio) return [];
+  const milestones = energizacionMilestonesFor(ener);
+  const totalCost = energizacionTotalCostFor(ener);
+  if (!totalCost) return [];
+  const start = new Date(ener.fechaInicio + "T00:00:00");
+
+  const withDates = milestones.map((m, i) => ({
+    cost: m.cost,
+    fechaEsperada: addDays(start, m.day).toISOString().slice(0, 10),
+    done: !!ener.milestones[i]?.done,
+    fechaReal: ener.milestones[i]?.fecha || null,
+  }));
+
+  const dateSet = new Set();
+  withDates.forEach((m) => {
+    dateSet.add(m.fechaEsperada);
+    if (m.fechaReal) dateSet.add(m.fechaReal);
+  });
+  dateSet.add(todayISO());
+  const sortedDates = Array.from(dateSet).sort();
+
+  return sortedDates.map((date) => {
+    const baseCost = withDates.reduce((s, m) => s + (m.fechaEsperada <= date ? m.cost : 0), 0);
+    const realCost = withDates.reduce((s, m) => s + (m.done && m.fechaReal && m.fechaReal <= date ? m.cost : 0), 0);
+    return {
+      date,
+      label: fmtDate(date),
+      base: Math.round((baseCost / totalCost) * 1000) / 10,
+      real: Math.round((realCost / totalCost) * 1000) / 10,
+    };
+  });
+}
+
+// Arma los "cortes de obra" para el informe PP-I-01: agrupa los pagos por proveedor (solo los que
+// se marquen como "contratista" en cortesObra.contratistas), contando cuántos pagos pagados lleva
+// cada uno como "# de corte" y sumando el valor acumulado — la retención (reteobra) se digita a
+// mano porque no sale de ningún cálculo.
+function buildCortesObra(pagos, cortesObraConfig) {
+  const seleccion = new Map((cortesObraConfig?.contratistas || []).filter((c) => c.incluir).map((c) => [c.proveedor, c]));
+  if (seleccion.size === 0) return [];
+  const porProveedor = new Map();
+  (pagos?.ordenes || []).forEach((o) => {
+    const prov = (o.proveedor || "").trim();
+    if (!seleccion.has(prov)) return;
+    const cur = porProveedor.get(prov) || { proveedor: prov, numCortes: 0, vrAcumulado: 0 };
+    cur.numCortes += (o.pagos || []).filter((p) => (p.estado || "pagado") === "pagado").length;
+    cur.vrAcumulado += ordenPagado(o);
+    porProveedor.set(prov, cur);
+  });
+  return Array.from(porProveedor.values()).map((c) => {
+    const reteobra = Number(seleccion.get(c.proveedor)?.reteobra) || 0;
+    return { ...c, reteobra, saldo: c.vrAcumulado - reteobra };
+  });
+}
+
 // Alerta de FPO. Para proyectos ≤1MW: la FPO se calcula sola (6 meses desde "Día 0", con prórroga
 // de 3 meses más). Para >1MW: la FPO no se calcula, se digita a mano (fpoManual) — el trámite ante
 // el CND no sigue esa regla de meses. En ambos casos avisa cuando faltan 30 días o menos, o si ya
@@ -1636,6 +1723,9 @@ export {
   balanceMargenTotals,
   balanceFlujoCaja,
   balanceHitosAlertas,
+  emptyProyectoInfoState,
+  buildEnergizacionCurvaSData,
+  buildCortesObra,
   clonePresupuestoState,
   cloneCronogramaState,
   clonePagosState,
