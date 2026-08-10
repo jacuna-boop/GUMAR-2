@@ -1035,7 +1035,10 @@ function cronogramaAtrasoAlertas(cronograma) {
 }
 
 // Builds the merged baseline ("línea base") vs actual ("seguimiento") S-curve series for the chart
-function buildCurvaSData(cronograma) {
+// cutoffDate: hasta qué fecha se muestra el avance real (por defecto, hoy) — más allá de esa fecha
+// el avance sale en null (no se dibuja línea), aunque haya seguimiento cargado después. La línea
+// base NO se corta: siempre muestra la curva planeada completa hasta el fin del proyecto.
+function buildCurvaSData(cronograma, cutoffDate = todayISO()) {
   const { tasks, seguimiento } = cronograma;
   const leafTasks = tasks.filter((t) => !t.esGrupo);
   const dateSet = new Set();
@@ -1047,6 +1050,7 @@ function buildCurvaSData(cronograma) {
     if (s.fecha) dateSet.add(s.fecha);
   });
   if (dateSet.size === 0) return [];
+  dateSet.add(cutoffDate); // así siempre hay un punto exacto en la fecha de corte, para leer el cumplimiento ahí
   const sortedDates = Array.from(dateSet).sort();
   const sortedSeg = [...seguimiento].filter((s) => s.fecha).sort((a, b) => a.fecha.localeCompare(b.fecha));
 
@@ -1055,7 +1059,7 @@ function buildCurvaSData(cronograma) {
       if (!t.fechaInicio || !t.fechaFin) return sum;
       return sum + (Number(t.peso) || 0) * fractionElapsed(t.fechaInicio, t.fechaFin, date);
     }, 0);
-    const lastSeg = [...sortedSeg].filter((s) => s.fecha <= date).pop();
+    const lastSeg = date <= cutoffDate ? [...sortedSeg].filter((s) => s.fecha <= date).pop() : null;
     return {
       date,
       label: fmtDate(date),
@@ -1609,7 +1613,9 @@ function nextEnergizacionMilestone(ener) {
 // Curva S de energización: % base (según el "día esperado" de cada hito, contado desde "Día 0")
 // vs % real (según la fecha en que se marcó cada hito como hecho) — se arma sola con los datos que
 // ya hay, sin necesidad de un registro de seguimiento aparte (a diferencia de Cronograma).
-function buildEnergizacionCurvaSData(ener) {
+// cutoffDate: hasta qué fecha se cuenta el avance real (por defecto, hoy) — la base no se corta,
+// siempre llega hasta el último hito planeado.
+function buildEnergizacionCurvaSData(ener, cutoffDate = todayISO()) {
   if (!ener?.fechaInicio) return [];
   const milestones = energizacionMilestonesFor(ener);
   const totalCost = energizacionTotalCostFor(ener);
@@ -1628,17 +1634,19 @@ function buildEnergizacionCurvaSData(ener) {
     dateSet.add(m.fechaEsperada);
     if (m.fechaReal) dateSet.add(m.fechaReal);
   });
-  dateSet.add(todayISO());
+  dateSet.add(cutoffDate);
   const sortedDates = Array.from(dateSet).sort();
 
   return sortedDates.map((date) => {
     const baseCost = withDates.reduce((s, m) => s + (m.fechaEsperada <= date ? m.cost : 0), 0);
-    const realCost = withDates.reduce((s, m) => s + (m.done && m.fechaReal && m.fechaReal <= date ? m.cost : 0), 0);
+    const realCost = date > cutoffDate
+      ? null
+      : withDates.reduce((s, m) => s + (m.done && m.fechaReal && m.fechaReal <= date ? m.cost : 0), 0);
     return {
       date,
       label: fmtDate(date),
       base: Math.round((baseCost / totalCost) * 1000) / 10,
-      real: Math.round((realCost / totalCost) * 1000) / 10,
+      real: realCost === null ? null : Math.round((realCost / totalCost) * 1000) / 10,
     };
   });
 }
@@ -1665,15 +1673,22 @@ function buildCortesObra(pagos, cortesObraConfig) {
   });
 }
 
-// Alerta de FPO. Para proyectos ≤1MW: la FPO se calcula sola (6 meses desde "Día 0", con prórroga
-// de 3 meses más). Para >1MW: la FPO no se calcula, se digita a mano (fpoManual) — el trámite ante
-// el CND no sigue esa regla de meses. En ambos casos avisa cuando faltan 30 días o menos, o si ya
-// venció, y no avisa si el proyecto ya quedó energizado al 100%.
+// Fecha de FPO. Para proyectos ≤1MW: se calcula sola (6 meses desde "Día 0", con prórroga de 3 meses
+// más = 9). Para >1MW: no se calcula, se digita a mano (fpoManual) — el trámite ante el CND no sigue
+// esa regla de meses.
+function energizacionFpoFecha(ener) {
+  if (!ener) return null;
+  const esMayor1mw = ener.tipo === "mayor1mw";
+  return esMayor1mw ? (ener.fpoManual || null) : (ener.fechaInicio ? addMonths(ener.fechaInicio, 9) : null);
+}
+
+// Alerta de FPO: avisa cuando faltan 30 días o menos, o si ya venció, y no avisa si el proyecto ya
+// quedó energizado al 100%.
 function energizacionFpoAlerta(ener, diasAviso = 30) {
   if (!ener) return null;
   if (energizacionProgress(ener) >= 100) return null;
   const esMayor1mw = ener.tipo === "mayor1mw";
-  const fpoFecha = esMayor1mw ? (ener.fpoManual || null) : (ener.fechaInicio ? addMonths(ener.fechaInicio, 9) : null);
+  const fpoFecha = energizacionFpoFecha(ener);
   if (!fpoFecha) return null;
   const etiqueta = esMayor1mw ? "la FPO" : "la FPO con prórroga";
   const dias = daysBetween(todayISO(), fpoFecha);
@@ -1699,6 +1714,7 @@ export {
   energizacionMilestonesFor,
   energizacionTotalCostFor,
   energizacionDiasRefFor,
+  energizacionFpoFecha,
   PRESUPUESTO_BASE_TEMPLATE,
   buildPresupuestoBaseFromTemplate,
   CRONOGRAMA_BASE_TEMPLATE,

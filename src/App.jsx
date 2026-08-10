@@ -19,7 +19,7 @@ import {
   emptyUpmeState, emptyEnergizacionState, emptyCronogramaState, emptyPresupuestoState, emptyPagosState,
   emptyBalanceState, balanceTotals, balanceMargenTotals, balanceFlujoCaja, balanceHitosAlertas,
   emptyProyectoInfoState, buildEnergizacionCurvaSData, buildCortesObra,
-  cronogramaAtrasoAlertas, cronogramaCurvaSAlerta,
+  cronogramaCurvaSAlerta,
   clonePresupuestoState, cloneCronogramaState, clonePagosState, cloneBalanceState, cloneUpmeState, cloneEnergizacionState,
   emptyProjectData, ensureFullProjectData, buildPresupuestoBaseFromTemplate, buildCronogramaBaseFromTemplate,
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData,
@@ -31,6 +31,8 @@ import {
   parseColombianNumber,
   ordenPagado, ordenProgramado, ordenSaldo, pagosTotals, pagosProximosAlertas, fmtMoney,
 } from "./lib/data.js";
+import { buildInformeProyecto } from "./lib/informePPI01.js";
+import { buildInformePPI01Workbook } from "./lib/informePPI01Excel.js";
 
 /* ---------------------------------------------------------------------
    Auth gate: shows Login until there's a Supabase session, then Dashboard
@@ -73,15 +75,19 @@ function Dashboard({ session }) {
   const [editingProject, setEditingProject] = useState(null); // project object | null
   const [managingMembers, setManagingMembers] = useState(null); // project object | null
   const [showCargosModal, setShowCargosModal] = useState(false);
+  const [showEditNameModal, setShowEditNameModal] = useState(false);
   const [pagosExportRange, setPagosExportRange] = useState(null); // { from, to } | null
   const [showImportText, setShowImportText] = useState(false);
   const [view, setView] = useState("overview"); // "overview" | "project"
   const [printTarget, setPrintTarget] = useState(null); // null | "project" | "general" | "tab"
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showInformePPI01Modal, setShowInformePPI01Modal] = useState(false);
+  const [informePPI01Ids, setInformePPI01Ids] = useState(null); // array de project ids | null (dispara la vista de impresión)
   const [showHistory, setShowHistory] = useState(false);
   const [role, setRole] = useState("editor"); // "admin" | "editor" | "lector" — "editor" es el default seguro
   const [cargoPerms, setCargoPerms] = useState({}); // casillas del cargo asignado (ver tabla "cargos") — vacío = sin permisos
   const [myFullName, setMyFullName] = useState("");
+  const [myCargoName, setMyCargoName] = useState(""); // nombre del cargo asignado (para "Cargo del responsable" del informe PP-I-01)
   const isAdmin = role === "admin";
   const isLector = role === "lector";
   // admin siempre puede todo; lector nunca puede editar nada (sin importar el cargo); el resto
@@ -91,13 +97,13 @@ function Dashboard({ session }) {
   const canManageUsers = hasPerm("puede_gestionar_usuarios");
 
   useEffect(() => {
-    const onAfterPrint = () => { setPrintTarget(null); setPagosExportRange(null); };
+    const onAfterPrint = () => { setPrintTarget(null); setPagosExportRange(null); setInformePPI01Ids(null); };
     window.addEventListener("afterprint", onAfterPrint);
     return () => window.removeEventListener("afterprint", onAfterPrint);
   }, []);
 
 
-  const rowToProject = (row) => ({ id: row.id, name: row.name, capacity: row.capacity, location: row.location, createdAt: row.created_at });
+  const rowToProject = (row) => ({ id: row.id, name: row.name, capacity: row.capacity, location: row.location, code: row.code || "", createdAt: row.created_at });
 
   // Initial load: full project list + el rol y cargo de quien inició sesión (para permisos)
   useEffect(() => {
@@ -111,6 +117,7 @@ function Dashboard({ session }) {
       // perfil/cargo asignado, se queda en los valores por defecto — no rompe el acceso de nadie.
       if (!roleResult.error && roleResult.data?.role) setRole(roleResult.data.role);
       if (!roleResult.error && roleResult.data?.cargos) setCargoPerms(roleResult.data.cargos);
+      if (!roleResult.error && roleResult.data?.cargos?.nombre) setMyCargoName(roleResult.data.cargos.nombre);
       if (!roleResult.error && roleResult.data?.full_name) setMyFullName(roleResult.data.full_name);
       setLoading(false);
     })();
@@ -290,8 +297,8 @@ function Dashboard({ session }) {
   // cloneFrom: null, o { sourceProjectId, modules: { upme, energizacion, cronograma, presupuesto, pagos, balance } }
   // — cada módulo marcado se copia tal cual del proyecto de origen (con ids nuevos); los que no se
   // marcan arrancan como en un proyecto nuevo normal (plantilla base para presupuesto/cronograma).
-  const addProject = async (name, capacity, location, cloneFrom) => {
-    const { data, error } = await supabase.from("projects").insert({ name, capacity, location, created_by: user.id }).select().single();
+  const addProject = async (name, capacity, location, cloneFrom, code) => {
+    const { data, error } = await supabase.from("projects").insert({ name, capacity, location, code: code || null, created_by: user.id }).select().single();
     if (error || !data) { setSaveError(true); return; }
     const newProject = rowToProject(data);
     setProjects((prev) => [...prev, newProject]);
@@ -324,10 +331,10 @@ function Dashboard({ session }) {
     setShowAddProject(false);
   };
 
-  const updateProjectInfo = async (id, name, capacity, location) => {
-    const { error } = await supabase.from("projects").update({ name, capacity, location }).eq("id", id);
+  const updateProjectInfo = async (id, name, capacity, location, code) => {
+    const { error } = await supabase.from("projects").update({ name, capacity, location, code: code || null }).eq("id", id);
     if (error) { setSaveError(true); return; }
-    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name, capacity, location } : p)));
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name, capacity, location, code: code || "" } : p)));
   };
 
   const deleteProject = async (id) => {
@@ -454,6 +461,8 @@ function Dashboard({ session }) {
           onImportText={() => setShowImportText(true)}
           userEmail={user.email}
           onSignOut={() => supabase.auth.signOut()}
+          myFullName={myFullName}
+          onEditName={() => setShowEditNameModal(true)}
           isAdmin={isAdmin}
           isLector={isLector}
           canDeleteProjects={canDeleteProjects}
@@ -469,13 +478,22 @@ function Dashboard({ session }) {
                   <h1 style={styles.h1}>Resumen general</h1>
                   <div style={styles.headerMeta}>{projects.length} proyecto{projects.length === 1 ? "" : "s"} activos</div>
                 </div>
-                <button
-                  className="no-print"
-                  style={styles.pdfBtn}
-                  onClick={() => { setPrintTarget("general"); setTimeout(() => window.print(), 50); }}
-                >
-                  <FileDown size={14} /> Exportar PDF
-                </button>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    className="no-print"
+                    style={styles.pdfBtn}
+                    onClick={() => { setPrintTarget("general"); setTimeout(() => window.print(), 50); }}
+                  >
+                    <FileDown size={14} /> Exportar PDF
+                  </button>
+                  <button
+                    className="no-print"
+                    style={styles.pdfBtn}
+                    onClick={() => setShowInformePPI01Modal(true)}
+                  >
+                    <FileDown size={14} /> Exportar informe PP-I-01
+                  </button>
+                </div>
               </div>
               <div style={styles.content}>
                 <ResumenGeneral
@@ -573,6 +591,49 @@ function Dashboard({ session }) {
       {pagosExportRange && selected && data && (
         <PrintPagosRangeContent project={selected} data={data.pagos} range={pagosExportRange} />
       )}
+      {informePPI01Ids && (
+        <PrintInformePPI01
+          projects={projects.filter((p) => informePPI01Ids.includes(p.id))}
+          projectDataById={projectData}
+        />
+      )}
+      {showInformePPI01Modal && (
+        <InformePPI01Modal
+          projects={projects}
+          onClose={() => setShowInformePPI01Modal(false)}
+          onExportExcel={async (ids, { periodoDesde, periodoHasta } = {}) => {
+            const selProjects = projects.filter((p) => ids.includes(p.id));
+            const logoBuffer = await fetch(gumarLogo).then((r) => r.arrayBuffer());
+            // Se vuelve a consultar el nombre/cargo justo antes de exportar (en vez de usar
+            // myFullName/myCargoName, que solo se cargan una vez al abrir la sesión) — así, si
+            // acabas de asignarte un cargo en el panel de Cargos, el informe ya lo refleja sin
+            // tener que recargar la página.
+            const { data: freshProfile } = await supabase.from("profiles").select("full_name, cargos(nombre)").eq("id", user.id).maybeSingle();
+            const buffer = await buildInformePPI01Workbook(selProjects, projectData, {
+              logoBuffer,
+              periodoDesde,
+              periodoHasta,
+              fechaPresentacion: todayISO(),
+              responsableNombre: freshProfile?.full_name || myFullName || user.email,
+              responsableCargo: freshProfile?.cargos?.nombre || myCargoName,
+              soloInfoBase: true,
+            });
+            const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `informe-ppi01-${todayISO()}.xlsx`;
+            a.click();
+            URL.revokeObjectURL(url);
+            setShowInformePPI01Modal(false);
+          }}
+          onExportPDF={(ids) => {
+            setShowInformePPI01Modal(false);
+            setInformePPI01Ids(ids);
+            setTimeout(() => window.print(), 50);
+          }}
+        />
+      )}
       {showExportModal && selected && (
         <ExportPdfModal
           tab={tab}
@@ -602,8 +663,8 @@ function Dashboard({ session }) {
           submitLabel="Guardar cambios"
           initial={editingProject}
           onClose={() => setEditingProject(null)}
-          onSave={(name, capacity, location) => {
-            updateProjectInfo(editingProject.id, name, capacity, location);
+          onSave={(name, capacity, location, _cloneFrom, code) => {
+            updateProjectInfo(editingProject.id, name, capacity, location, code);
             setEditingProject(null);
           }}
         />
@@ -613,6 +674,14 @@ function Dashboard({ session }) {
       )}
       {showCargosModal && (
         <CargosModal onClose={() => setShowCargosModal(false)} />
+      )}
+      {showEditNameModal && (
+        <EditNameModal
+          userId={user.id}
+          currentName={myFullName}
+          onClose={() => setShowEditNameModal(false)}
+          onSaved={(name) => { setMyFullName(name); setShowEditNameModal(false); }}
+        />
       )}
       {deleteTarget && (
         <ConfirmModal
@@ -638,7 +707,7 @@ function Dashboard({ session }) {
   );
 }
 
-function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, onEditProject, onManageMembers, onManageCargos, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut, isAdmin, isLector, canDeleteProjects, canManageUsers }) {
+function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, onEditProject, onManageMembers, onManageCargos, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut, myFullName, onEditName, isAdmin, isLector, canDeleteProjects, canManageUsers }) {
   const fileInputRef = React.useRef(null);
 
   return (
@@ -745,8 +814,11 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
 
       <div style={styles.sidebarFooter}>
         <div style={styles.sharedNote}>
-          Conectado como <strong>{userEmail}</strong> — solo ves los proyectos a los que te dieron acceso.
+          Conectado como <strong>{myFullName || userEmail}</strong> — solo ves los proyectos a los que te dieron acceso.
         </div>
+        <button style={{ ...styles.footerBtnFull, textAlign: "left", fontSize: 11.5, color: "#7A8A93", padding: "4px 0 8px" }} onClick={onEditName}>
+          {myFullName ? "Editar mi nombre" : "Agregar mi nombre"}
+        </button>
         <div style={styles.footerBtnRow}>
           <button style={styles.footerBtn} onClick={onExport}>
             Exportar datos
@@ -1671,6 +1743,13 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
     onChange({ ...data, milestones: next });
   };
 
+  // Marcar un hito como hecho lo llena con hoy por defecto, pero la fecha real de ejecución puede
+  // ser otro día — se puede corregir a mano después.
+  const updateMilestoneFecha = (idx, fecha) => {
+    const next = data.milestones.map((m, i) => (i === idx ? { ...m, fecha } : m));
+    onChange({ ...data, milestones: next });
+  };
+
   const overallPct = energizacionProgress(data);
 
   return (
@@ -1801,7 +1880,14 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
                     <span style={styles.wbsItemDay}>Día {it.day}</span>
                     <span style={styles.wbsItemCost}>{it.cost}</span>
                     {state.done ? (
-                      <span style={styles.wbsItemDate}>{fmtDate(state.fecha)}</span>
+                      <input
+                        type="date"
+                        value={state.fecha || ""}
+                        onChange={(e) => updateMilestoneFecha(i, e.target.value)}
+                        style={{ ...styles.miniInput, width: 130 }}
+                        disabled={isLector}
+                        title="Fecha real en que se completó este trámite"
+                      />
                     ) : (
                       <span style={styles.wbsItemDatePlaceholder}>—</span>
                     )}
@@ -1827,7 +1913,6 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
   const [confirmDelete, setConfirmDelete] = useState(null); // { kind: "task" | "seg", id, label } | null
 
   const pesoTotal = cronogramaPesoTotal(data.tasks);
-  const alertasAtraso = cronogramaAtrasoAlertas(data);
   const curvaData = buildCurvaSData(data);
   const lastReal = [...data.seguimiento].filter((s) => s.fecha).sort((a, b) => a.fecha.localeCompare(b.fecha)).pop();
   const avanceHoy = cronogramaAvanceActual(data.tasks);
@@ -1901,16 +1986,75 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
         </div>
       </div>
 
-      {alertasAtraso.length > 0 && (
-        <div style={styles.pagosAlertBox}>
-          <div style={styles.cardHead}><AlertTriangle size={16} color="#E8A33D" /><span>Actividades atrasadas</span></div>
-          <ul style={styles.alertList}>
-            {alertasAtraso.map((a, i) => (
-              <li key={i} style={{ ...styles.alertItem, color: a.tipo === "vencido" ? "#E2604F" : "#E8A33D" }}>{a.texto}</li>
-            ))}
-          </ul>
+      <div style={styles.cronoHead}>
+        <h3 style={styles.h3}>Curva S de construcción</h3>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={styles.pesoTotalTag}>
+            avance real hoy: {avanceHoy}%{lastReal && lastReal.fecha !== todayISO() ? ` · último registro: ${lastReal.avance}% (${fmtDate(lastReal.fecha)})` : ""}
+          </span>
+        </div>
+      </div>
+      <div style={{ color: "#7A8A93", fontSize: 11.5, margin: "-6px 0 12px" }}>
+        El seguimiento se registra solo: cada vez que editas el %completado de una actividad, el punto de hoy se actualiza automáticamente.
+      </div>
+
+      {curvaData.length === 0 ? (
+        <div style={{ color: "#7A8A93", fontSize: 13, padding: "10px 0 20px" }}>
+          Agrega actividades con fechas para ver la línea base, y registros de avance real para ver la línea de seguimiento.
+        </div>
+      ) : (
+        <div style={styles.chartBox}>
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={curvaData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
+              <XAxis dataKey="label" tick={{ fill: "#7A8A93", fontSize: 10 }} />
+              <YAxis domain={[0, 100]} tick={{ fill: "#7A8A93", fontSize: 10 }} unit="%" />
+              <Tooltip contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }} />
+              <RLegend wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="base" name="Línea base" stroke="#4FA8D8" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="real" name="Seguimiento real" stroke="#F5B942" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       )}
+
+      <div style={styles.cronoTableWrap}>
+        <table style={styles.overviewTable}>
+          <thead>
+            <tr>
+              <th style={styles.ovTh}>Fecha de corte</th>
+              <th style={styles.ovTh}>Avance real acumulado</th>
+              <th style={styles.ovTh}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...data.seguimiento].sort((a, b) => a.fecha.localeCompare(b.fecha)).map((s) => (
+              <tr key={s.id}>
+                <td style={styles.ovTd}>
+                  <input type="date" style={styles.miniInput} value={s.fecha} onChange={(e) => updateSeg(s.id, { fecha: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <input type="number" style={{ ...styles.miniInput, width: 70 }} value={s.avance} onChange={(e) => updateSeg(s.id, { avance: e.target.value })} />
+                </td>
+                <td style={styles.ovTd}>
+                  <button style={styles.rowDeleteBtn} onClick={() => askDeleteSeg(s)}><Trash2 size={13} /></button>
+                </td>
+              </tr>
+            ))}
+            <tr>
+              <td style={styles.ovTd}>
+                <input type="date" style={styles.miniInput} value={newSeg.fecha} onChange={(e) => setNewSeg({ ...newSeg, fecha: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}>
+                <input type="number" style={{ ...styles.miniInput, width: 70 }} placeholder="%" value={newSeg.avance} onChange={(e) => setNewSeg({ ...newSeg, avance: e.target.value })} />
+              </td>
+              <td style={styles.ovTd}>
+                <button style={styles.addRowBtn} onClick={addSeg}><Plus size={14} /></button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       {showPaste && (
         <PasteCronogramaModal
@@ -2069,76 +2213,6 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
           </div>
         </>
       )}
-
-      <div style={styles.cronoHead}>
-        <h3 style={styles.h3}>Curva S de construcción</h3>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={styles.pesoTotalTag}>
-            avance real hoy: {avanceHoy}%{lastReal && lastReal.fecha !== todayISO() ? ` · último registro: ${lastReal.avance}% (${fmtDate(lastReal.fecha)})` : ""}
-          </span>
-        </div>
-      </div>
-      <div style={{ color: "#7A8A93", fontSize: 11.5, margin: "-6px 0 12px" }}>
-        El seguimiento se registra solo: cada vez que editas el %completado de una actividad, el punto de hoy se actualiza automáticamente.
-      </div>
-
-      {curvaData.length === 0 ? (
-        <div style={{ color: "#7A8A93", fontSize: 13, padding: "10px 0 20px" }}>
-          Agrega actividades con fechas para ver la línea base, y registros de avance real para ver la línea de seguimiento.
-        </div>
-      ) : (
-        <div style={styles.chartBox}>
-          <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={curvaData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
-              <XAxis dataKey="label" tick={{ fill: "#7A8A93", fontSize: 10 }} />
-              <YAxis domain={[0, 100]} tick={{ fill: "#7A8A93", fontSize: 10 }} unit="%" />
-              <Tooltip contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }} />
-              <RLegend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="base" name="Línea base" stroke="#4FA8D8" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="real" name="Seguimiento real" stroke="#F5B942" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      <div style={styles.cronoTableWrap}>
-        <table style={styles.overviewTable}>
-          <thead>
-            <tr>
-              <th style={styles.ovTh}>Fecha de corte</th>
-              <th style={styles.ovTh}>Avance real acumulado</th>
-              <th style={styles.ovTh}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...data.seguimiento].sort((a, b) => a.fecha.localeCompare(b.fecha)).map((s) => (
-              <tr key={s.id}>
-                <td style={styles.ovTd}>
-                  <input type="date" style={styles.miniInput} value={s.fecha} onChange={(e) => updateSeg(s.id, { fecha: e.target.value })} />
-                </td>
-                <td style={styles.ovTd}>
-                  <input type="number" style={{ ...styles.miniInput, width: 70 }} value={s.avance} onChange={(e) => updateSeg(s.id, { avance: e.target.value })} />
-                </td>
-                <td style={styles.ovTd}>
-                  <button style={styles.rowDeleteBtn} onClick={() => askDeleteSeg(s)}><Trash2 size={13} /></button>
-                </td>
-              </tr>
-            ))}
-            <tr>
-              <td style={styles.ovTd}>
-                <input type="date" style={styles.miniInput} value={newSeg.fecha} onChange={(e) => setNewSeg({ ...newSeg, fecha: e.target.value })} />
-              </td>
-              <td style={styles.ovTd}>
-                <input type="number" style={{ ...styles.miniInput, width: 70 }} placeholder="%" value={newSeg.avance} onChange={(e) => setNewSeg({ ...newSeg, avance: e.target.value })} />
-              </td>
-              <td style={styles.ovTd}>
-                <button style={styles.addRowBtn} onClick={addSeg}><Plus size={14} /></button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
 
       {confirmDelete && (
         <ConfirmModal
@@ -3869,6 +3943,7 @@ const CLONE_MODULE_OPTIONS = [
 
 function ProjectFormModal({ onClose, onSave, initial, title, submitLabel, existingProjects }) {
   const [name, setName] = useState(initial?.name || "");
+  const [code, setCode] = useState(initial?.code || "");
   const [capacity, setCapacity] = useState(initial?.capacity || "");
   const initialUbicacion = parseUbicacion(initial?.location);
   const [departamento, setDepartamento] = useState(initialUbicacion.departamento);
@@ -3885,7 +3960,7 @@ function ProjectFormModal({ onClose, onSave, initial, title, submitLabel, existi
     const cloneFrom = cloneSourceId
       ? { sourceProjectId: cloneSourceId, modules: cloneModules }
       : null;
-    onSave(name.trim(), capacity.trim(), location, cloneFrom);
+    onSave(name.trim(), capacity.trim(), location, cloneFrom, code.trim());
   };
 
   return (
@@ -3898,6 +3973,10 @@ function ProjectFormModal({ onClose, onSave, initial, title, submitLabel, existi
         <label style={styles.modalField}>
           <span>Nombre del proyecto</span>
           <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. Filigrana 9.9 MWp" autoFocus />
+        </label>
+        <label style={styles.modalField}>
+          <span>Código corto (opcional)</span>
+          <input style={styles.input} value={code} onChange={(e) => setCode(e.target.value)} placeholder="Ej. GP084" />
         </label>
         <label style={styles.modalField}>
           <span>Capacidad (MWp)</span>
@@ -4084,6 +4163,84 @@ function ExportPdfModal({ tab, onClose, onChoose }) {
   );
 }
 
+// Selector de proyectos para el informe PP-I-01 (control presupuestal y cronograma) — cubre varios
+// proyectos en un solo archivo, así que se elige aparte del "Exportar PDF" normal (que es de un
+// proyecto o del resumen general).
+function InformePPI01Modal({ projects, onClose, onExportExcel, onExportPDF }) {
+  const [selected, setSelected] = useState(() => new Set(projects.map((p) => p.id)));
+  const [periodoDesde, setPeriodoDesde] = useState("");
+  const [periodoHasta, setPeriodoHasta] = useState("");
+  const [generating, setGenerating] = useState(false);
+
+  const toggle = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectedIds = Array.from(selected);
+  const disabled = selectedIds.length === 0;
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.exportModal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Exportar informe PP-I-01</h3>
+          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+        </div>
+        <p style={styles.exportHint}>
+          Elige los proyectos que quieres incluir (control presupuestal y cronograma) — cada uno
+          queda en su propia página/hoja del informe.
+        </p>
+        <div style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, margin: "8px 0 14px" }}>
+          {projects.map((p) => (
+            <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#E8EDEF" }}>
+              <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
+              {p.name}{p.capacity ? ` — ${p.capacity} MWp` : ""}
+            </label>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+          <label style={{ ...styles.modalField, flex: 1 }}>
+            <span>Periodo del informe — desde</span>
+            <input type="date" style={styles.input} value={periodoDesde} onChange={(e) => setPeriodoDesde(e.target.value)} />
+          </label>
+          <label style={{ ...styles.modalField, flex: 1 }}>
+            <span>Periodo del informe — hasta</span>
+            <input type="date" style={styles.input} value={periodoHasta} onChange={(e) => setPeriodoHasta(e.target.value)} />
+          </label>
+        </div>
+        {disabled && <div style={{ color: "#E8A33D", fontSize: 12, marginBottom: 10 }}>Elige al menos un proyecto.</div>}
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            style={{ ...styles.addProjectBtn, flex: 1, opacity: disabled || generating ? 0.6 : 1 }}
+            disabled={disabled || generating}
+            onClick={async () => {
+              setGenerating(true);
+              try {
+                await onExportExcel(selectedIds, { periodoDesde, periodoHasta });
+              } finally {
+                setGenerating(false);
+              }
+            }}
+          >
+            {generating ? <Loader2 className="spin" size={14} /> : <FileDown size={14} />} Descargar Excel
+          </button>
+          <button
+            style={{ ...styles.confirmCancelBtn, flex: 1, opacity: disabled ? 0.6 : 1 }}
+            disabled={disabled}
+            onClick={() => onExportPDF(selectedIds)}
+          >
+            Exportar PDF
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Modal de admin: marca qué personas pueden ver/editar este proyecto. Los admins siempre tienen
 // acceso a todo (no aparecen como editables aquí, se muestran ya marcados y bloqueados).
 function ProjectMembersModal({ project, onClose }) {
@@ -4183,9 +4340,19 @@ const CARGO_PERMISOS = [
   { key: "puede_gestionar_usuarios", label: "Gestionar cargos y usuarios" },
 ];
 
+// Agrupa los permisos por tema (en vez de un solo bloque de 9 casillas) para que un cargo
+// expandido se pueda leer de un vistazo en vez de sentirse como un muro de checkboxes.
+const CARGO_PERMISO_GROUPS = [
+  { title: "Módulos", keys: ["puede_editar_upme", "puede_editar_energizacion", "puede_editar_cronograma", "puede_editar_presupuesto"] },
+  { title: "Pagos", keys: ["puede_editar_pagos", "puede_aprobar_pagos"] },
+  { title: "Administración", keys: ["puede_editar_balance", "puede_eliminar_proyectos", "puede_gestionar_usuarios"] },
+];
+
 // Admin (solo lectura aquí, arriba de todo). Crea/edita cargos con sus casillas de permisos, y
 // asigna el cargo de cada persona registrada. Arranca en blanco a propósito — nadie (salvo admin)
-// tiene ningún permiso hasta que se cree un cargo y se le asigne.
+// tiene ningún permiso hasta que se cree un cargo y se le asigne. El admin también puede elegirse
+// un cargo — no le cambia ningún permiso (admin siempre puede todo), es solo la etiqueta que se usa
+// en "Cargo del responsable" al exportar el informe PP-I-01.
 function CargosModal({ onClose }) {
   const [cargos, setCargos] = useState(null); // null = cargando
   const [profiles, setProfiles] = useState([]);
@@ -4193,6 +4360,7 @@ function CargosModal({ onClose }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmDeleteCargo, setConfirmDeleteCargo] = useState(null); // { id, nombre } | null
+  const [expandedCargoId, setExpandedCargoId] = useState(null); // solo un cargo expandido a la vez
 
   const load = async () => {
     const [{ data: cargosData, error: cargosErr }, { data: profilesData }] = await Promise.all([
@@ -4254,49 +4422,8 @@ function CargosModal({ onClose }) {
             <div style={{ padding: "16px 0", color: "#7A8A93", fontSize: 13 }}>Cargando…</div>
           ) : (
             <>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#E8EDEF", margin: "8px 0" }}>Cargos</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 260, overflowY: "auto", marginBottom: 10 }}>
-                {cargos.length === 0 && (
-                  <div style={{ fontSize: 12, color: "#7A8A93" }}>Todavía no hay cargos creados — crea el primero abajo.</div>
-                )}
-                {cargos.map((c) => (
-                  <div key={c.id} style={{ background: "#1C242A", borderRadius: 8, padding: 10 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                      <strong style={{ fontSize: 13, color: "#E8EDEF" }}>{c.nombre}</strong>
-                      <button style={styles.rowDeleteBtn} onClick={() => setConfirmDeleteCargo({ id: c.id, nombre: c.nombre })}>
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      {CARGO_PERMISOS.map((perm) => (
-                        <label key={perm.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, color: "#C7D1D6" }}>
-                          <input
-                            type="checkbox"
-                            checked={!!c[perm.key]}
-                            disabled={busy}
-                            onChange={(e) => updateCargoPerm(c, perm.key, e.target.checked)}
-                          />
-                          {perm.label}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
-                <input
-                  style={{ ...styles.miniInput, flex: 1 }}
-                  placeholder="Nombre del cargo nuevo (ej. Contador)"
-                  value={newCargoName}
-                  onChange={(e) => setNewCargoName(e.target.value)}
-                />
-                <button style={{ ...styles.addProjectBtn, opacity: newCargoName.trim() ? 1 : 0.5 }} disabled={!newCargoName.trim() || busy} onClick={addCargo}>
-                  <Plus size={14} /> Crear cargo
-                </button>
-              </div>
-
               <div style={{ fontSize: 13, fontWeight: 700, color: "#E8EDEF", margin: "8px 0" }}>Usuarios</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto", marginBottom: 20 }}>
                 {profiles.map((p) => (
                   <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: "#1C242A", borderRadius: 8, padding: "8px 10px" }}>
                     <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -4306,7 +4433,7 @@ function CargosModal({ onClose }) {
                     <select
                       style={{ ...styles.miniInput, width: 190 }}
                       value={p.cargo_id || ""}
-                      disabled={p.role === "admin" || busy}
+                      disabled={busy}
                       onChange={(e) => assignCargo(p.id, e.target.value)}
                     >
                       <option value="">Sin cargo</option>
@@ -4316,6 +4443,71 @@ function CargosModal({ onClose }) {
                     </select>
                   </div>
                 ))}
+              </div>
+
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#E8EDEF", margin: "8px 0" }}>Cargos</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto", marginBottom: 10 }}>
+                {cargos.length === 0 && (
+                  <div style={{ fontSize: 12, color: "#7A8A93" }}>Todavía no hay cargos creados — crea el primero abajo.</div>
+                )}
+                {cargos.map((c) => {
+                  const isOpen = expandedCargoId === c.id;
+                  return (
+                    <div key={c.id} style={{ background: "#1C242A", borderRadius: 8, overflow: "hidden" }}>
+                      <div
+                        style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px 10px 6px", cursor: "pointer" }}
+                        onClick={() => setExpandedCargoId(isOpen ? null : c.id)}
+                      >
+                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          {isOpen ? <ChevronDown size={15} color="#7A8A93" /> : <ChevronRight size={15} color="#7A8A93" />}
+                          <strong style={{ fontSize: 13, color: "#E8EDEF" }}>{c.nombre}</strong>
+                        </span>
+                        <button
+                          style={styles.rowDeleteBtn}
+                          onClick={(e) => { e.stopPropagation(); setConfirmDeleteCargo({ id: c.id, nombre: c.nombre }); }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                      {isOpen && (
+                        <div style={{ padding: "0 12px 12px" }}>
+                          {CARGO_PERMISO_GROUPS.map((group, gi) => (
+                            <div key={group.title} style={{ borderTop: gi > 0 ? "1px solid #232D33" : "none", paddingTop: gi > 0 ? 10 : 0, marginTop: gi > 0 ? 10 : 0 }}>
+                              <div style={{ fontSize: 10, color: "#5F6B72", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>{group.title}</div>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "6px 16px" }}>
+                                {group.keys.map((key) => {
+                                  const perm = CARGO_PERMISOS.find((p) => p.key === key);
+                                  return (
+                                    <label key={key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#C7D1D6" }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={!!c[key]}
+                                        disabled={busy}
+                                        onChange={(e) => updateCargoPerm(c, key, e.target.checked)}
+                                      />
+                                      {perm.label}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  style={{ ...styles.miniInput, flex: 1 }}
+                  placeholder="Nombre del cargo nuevo (ej. Contador)"
+                  value={newCargoName}
+                  onChange={(e) => setNewCargoName(e.target.value)}
+                />
+                <button style={{ ...styles.addProjectBtn, opacity: newCargoName.trim() ? 1 : 0.5 }} disabled={!newCargoName.trim() || busy} onClick={addCargo}>
+                  <Plus size={14} /> Crear cargo
+                </button>
               </div>
             </>
           )}
@@ -4331,6 +4523,43 @@ function CargosModal({ onClose }) {
         />
       )}
     </>
+  );
+}
+
+// Cualquier persona puede editar su propio nombre (a diferencia del cargo, que solo el admin
+// asigna) — hoy en día "full_name" solo se guardaba una vez, al crear la cuenta, sin forma de
+// corregirlo después. Se usa como "Nombre del responsable" al exportar el informe PP-I-01.
+function EditNameModal({ userId, currentName, onClose, onSaved }) {
+  const [name, setName] = useState(currentName || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    setError("");
+    const { error: err } = await supabase.from("profiles").update({ full_name: name.trim() }).eq("id", userId);
+    if (err) { setError("No se pudo guardar el nombre. Intenta de nuevo."); setBusy(false); return; }
+    onSaved(name.trim());
+  };
+
+  return (
+    <div style={styles.modalOverlay} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Mi nombre</h3>
+          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
+        </div>
+        {error && <div style={styles.importError}>{error}</div>}
+        <label style={styles.modalField}>
+          <span>Nombre completo</span>
+          <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. Juan Acuña Guerrero" autoFocus />
+        </label>
+        <button style={{ ...styles.addProjectBtn, marginTop: 8, opacity: name.trim() ? 1 : 0.5 }} disabled={!name.trim() || busy} onClick={save}>
+          Guardar
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -5068,6 +5297,158 @@ function PrintBalanceContent({ data, pagos, presupuesto }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// Informe PP-I-01 en PDF: una "página" por proyecto (salto de página forzado entre uno y otro),
+// con el mismo contenido que la hoja INFO BASE del Excel (buildInformeProyecto es la fuente única
+// para ambos formatos) más una tabla de PPTO SEG y la Curva S de energización dibujada como gráfico
+// vectorial (no imagen rasterizada) para que se vea nítida al imprimir/guardar como PDF.
+function PrintInformePPI01({ projects, projectDataById }) {
+  const now = new Date();
+  const total = projects.length;
+  return (
+    <div className="print-only" style={prCard.page}>
+      {projects.map((project, idx) => {
+        const data = projectDataById[project.id];
+        const inf = buildInformeProyecto(project, data);
+        const groups = groupPresupuestoItems(inf.presupuestoEjecucion);
+        return (
+          <div key={project.id} style={{ ...prCard.wrap, pageBreakAfter: idx < total - 1 ? "always" : "auto" }}>
+            <div style={prCard.headerRow}>
+              <h1 style={prCard.h1}>Informe PP-I-01 — {project.name}</h1>
+              <div style={prCard.meta}>Página {idx + 1} de {total}</div>
+              <div style={prCard.genAt}>Generado el {fmtDateTime(now)}</div>
+            </div>
+
+            <div style={prCard.card}>
+              <PrCardHead color="#4FA8D8">1. Equipo de trabajo</PrCardHead>
+              {inf.equipo.length === 0 ? (
+                <div style={prCard.cardSub}>Sin equipo asignado.</div>
+              ) : (
+                <table style={prCard.table}>
+                  <thead><tr><th style={prCard.th}>Cargo</th><th style={prCard.th}>Nombre</th></tr></thead>
+                  <tbody>
+                    {inf.equipo.map((m) => <tr key={m.id}><td style={prCard.td}>{m.cargo}</td><td style={prCard.td}>{m.nombre}</td></tr>)}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div style={prCard.card}>
+              <PrCardHead color="#7FD08A">2. Ubicación</PrCardHead>
+              <div style={prCard.cardSub}>{inf.ubicacion || "Sin ubicación registrada."}</div>
+            </div>
+
+            <div style={prCard.card}>
+              <PrCardHead color="#F5B942">3. Información técnica</PrCardHead>
+              <div style={prCard.cardSub}>
+                Potencia: {inf.potencia ? `${inf.potencia} MWp` : "—"} · FPO: {inf.fpo ? fmtDate(inf.fpo) : "sin definir"}
+              </div>
+              <table style={prCard.table}>
+                <tbody>
+                  <tr><td style={prCard.td}><b>3.1 Paneles</b></td><td style={prCard.td}>{inf.fichaTecnica.paneles.cantidad} und · {inf.fichaTecnica.paneles.potenciaWp} Wp · {inf.fichaTecnica.paneles.marca} {inf.fichaTecnica.paneles.referencia}</td></tr>
+                  <tr><td style={prCard.td}><b>3.2 Inversores</b></td><td style={prCard.td}>{inf.fichaTecnica.inversores.cantidad} und · {inf.fichaTecnica.inversores.capacidad} · {inf.fichaTecnica.inversores.marca} {inf.fichaTecnica.inversores.referencia}</td></tr>
+                  <tr><td style={prCard.td}><b>3.3 Transformador</b></td><td style={prCard.td}>{inf.fichaTecnica.transformador.tipo} · {inf.fichaTecnica.transformador.marca}</td></tr>
+                  <tr><td style={prCard.td}><b>3.4 Estructura</b></td><td style={prCard.td}>{inf.fichaTecnica.estructura.configuracion} · {inf.fichaTecnica.estructura.cantidad} und · {inf.fichaTecnica.estructura.proveedor}</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div style={prCard.card}>
+              <PrCardHead color="#A78BFA">4. Información presupuestal y financiera</PrCardHead>
+              <div style={prCard.statGrid}>
+                <div style={prCard.statCard}><div style={prCard.statNum}>{fmtMoney(inf.financiero.valorContractual)}</div><div style={prCard.statLabel}>Valor contractual</div></div>
+                <div style={prCard.statCard}><div style={prCard.statNum}>{fmtMoney(inf.financiero.costoEstimadoInicial)}</div><div style={prCard.statLabel}>Costo estimado inicial</div></div>
+                <div style={prCard.statCard}><div style={prCard.statNum}>{fmtMoney(inf.financiero.costoProyectado)}</div><div style={prCard.statLabel}>Costo proyectado</div></div>
+                <div style={prCard.statCard}><div style={{ ...prCard.statNum, color: inf.financiero.ebitda >= 0 ? "#3E9B4F" : "#C0392B" }}>{fmtMoney(inf.financiero.ebitda)}</div><div style={prCard.statLabel}>EBITDA / Ganancia o pérdida</div></div>
+                <div style={prCard.statCard}><div style={prCard.statNum}>{Math.round(inf.financiero.eficienciaCosto * 100)}%</div><div style={prCard.statLabel}>Eficiencia del costo</div></div>
+                <div style={prCard.statCard}><div style={prCard.statNum}>{inf.cumplimientoEnergizacion ? `${inf.cumplimientoEnergizacion.real}%` : "—"}</div><div style={prCard.statLabel}>Cumplimiento Curva S energización</div></div>
+              </div>
+            </div>
+
+            {inf.curvaSEnergizacion.length > 0 && (
+              <div style={prCard.card}>
+                <PrCardHead color="#F5B942">Curva S de energización</PrCardHead>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={inf.curvaSEnergizacion} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E5E8" />
+                    <XAxis dataKey="label" tick={{ fill: "#777", fontSize: 9 }} />
+                    <YAxis domain={[0, 100]} tick={{ fill: "#777", fontSize: 9 }} unit="%" />
+                    <RLegend wrapperStyle={{ fontSize: 11 }} />
+                    <Line type="monotone" dataKey="base" name="Línea base" stroke="#4FA8D8" strokeWidth={2} dot={false} isAnimationActive={false} />
+                    <Line type="monotone" dataKey="real" name="Avance real" stroke="#F5B942" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            <div style={prCard.card}>
+              <PrCardHead color="#E77DA8">5. Cortes de obra</PrCardHead>
+              {inf.cortesObra.length === 0 ? (
+                <div style={prCard.cardSub}>Sin contratistas seleccionados.</div>
+              ) : (
+                <table style={prCard.table}>
+                  <thead>
+                    <tr>
+                      <th style={prCard.th}>Contratista</th><th style={prCard.th}># de corte</th>
+                      <th style={prCard.th}>Vr acumulado</th><th style={prCard.th}>Reteobra</th><th style={prCard.th}>Saldo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inf.cortesObra.map((c) => (
+                      <tr key={c.proveedor}>
+                        <td style={prCard.td}>{c.proveedor}</td>
+                        <td style={prCard.td}>{c.numCortes}</td>
+                        <td style={prCard.td}>{fmtMoney(c.vrAcumulado)}</td>
+                        <td style={prCard.td}>{fmtMoney(c.reteobra)}</td>
+                        <td style={prCard.td}>{fmtMoney(c.saldo)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div style={prCard.card}>
+              <PrCardHead color="#7FD08A">PPTO SEG — Presupuesto de ejecución</PrCardHead>
+              {groups.length === 0 ? (
+                <div style={prCard.cardSub}>Sin ítems en presupuesto de ejecución.</div>
+              ) : (
+                <table style={prCard.table}>
+                  <thead>
+                    <tr>
+                      <th style={prCard.th}>Ítem</th><th style={prCard.th}>Descripción</th><th style={prCard.th}>Cant.</th>
+                      <th style={prCard.th}>Unidad</th><th style={prCard.th}>Valor unitario</th><th style={prCard.th}>Valor total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groups.map((g) => (
+                      <React.Fragment key={g.categoria}>
+                        <tr><td style={{ ...prCard.td, fontWeight: 700 }} colSpan={6}>{g.categoria}</td></tr>
+                        {g.items.map((it) => {
+                          const calc = calcPresupuestoItem(it);
+                          return (
+                            <tr key={it.id}>
+                              <td style={prCard.td}>{it.item}</td>
+                              <td style={prCard.td}>{it.descripcion}</td>
+                              <td style={prCard.td}>{it.cantidad}</td>
+                              <td style={prCard.td}>{it.unidad}</td>
+                              <td style={prCard.td}>{fmtMoney(it.valorUnitario)}</td>
+                              <td style={prCard.td}>{fmtMoney(calc.valorTotal)}</td>
+                            </tr>
+                          );
+                        })}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

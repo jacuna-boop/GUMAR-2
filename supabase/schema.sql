@@ -9,6 +9,7 @@ create extension if not exists "pgcrypto";
 create table if not exists projects (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  code text, -- código corto interno (ej. "GP084"), opcional — se usa en el informe PP-I-01
   capacity text,
   location text,
   created_at timestamptz default now(),
@@ -221,6 +222,7 @@ drop policy if exists "editor update project_history" on project_history;
 drop policy if exists "member editor update project_history" on project_history;
 drop policy if exists "admin manage project_members" on project_members;
 drop policy if exists "manager update profiles" on profiles;
+drop policy if exists "self update own name" on profiles;
 drop policy if exists "authenticated read cargos" on cargos;
 drop policy if exists "manager write cargos" on cargos;
 
@@ -262,6 +264,19 @@ create policy "manager update profiles" on profiles
   with check (
     (public.is_admin() or public.tiene_permiso('puede_gestionar_usuarios'))
     and role = (select p2.role from profiles p2 where p2.id = profiles.id)
+  );
+
+-- Cualquiera puede editar su PROPIO nombre (ej. desde "Editar mi nombre" en el sidebar), sin
+-- necesitar ser manager — pero el check impide que se cuele un cambio de role o cargo_id por esta
+-- vía (eso sigue siendo solo cosa de un manager, vía la política de arriba).
+create policy "self update own name" on profiles
+  for update using (
+    auth.uid() = id
+  )
+  with check (
+    auth.uid() = id
+    and role = (select p2.role from profiles p2 where p2.id = profiles.id)
+    and cargo_id is not distinct from (select p2.cargo_id from profiles p2 where p2.id = profiles.id)
   );
 
 create policy "admin manage project_members" on project_members
