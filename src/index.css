@@ -2,7 +2,8 @@
 body, html, #root { margin: 0; padding: 0; background: #0F1417; }
 input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
 ::selection { background: #F5B94255; }
-select option { background: #171E23; }
+select option { background: #FFFFFF; color: #22312D; }
+select optgroup { background: #F2F6F4; color: #22312D; font-style: normal; }
 
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

@@ -3380,14 +3380,14 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
               return (
                 <React.Fragment key={o.id}>
                   <tr style={styles.ovRow} onClick={() => setOpenId(isOpen ? null : o.id)}>
-                    <td style={lightOvTdName} onClick={(e) => e.stopPropagation()}>
+                    <td style={lightOvTdName}>
                       <input
                         style={{ ...lightMiniInput, fontWeight: 600 }}
                         value={o.numero}
                         onChange={(e) => updateOrden(o.id, { numero: e.target.value })}
                       />
                     </td>
-                    <td style={lightOvTd} onClick={(e) => e.stopPropagation()}>
+                    <td style={lightOvTd}>
                       <input
                         style={lightMiniInput}
                         placeholder="Concepto de la orden"
@@ -5595,7 +5595,8 @@ function GlobalStyle() {
       body, html, #root { margin:0; padding:0; }
       input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
       ::selection { background: #F5B94255; }
-      select option { background:#171E23; }
+      select option { background:#FFFFFF; color:#22312D; }
+      select optgroup { background:#F2F6F4; color:#22312D; font-style:normal; }
       .spin { animation: spin 1s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
 
