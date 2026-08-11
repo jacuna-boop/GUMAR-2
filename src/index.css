@@ -5,6 +5,8 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
 select option { background: #FFFFFF; color: #22312D; }
 select optgroup { background: #F2F6F4; color: #22312D; font-style: normal; }
 
+.sb-nav-btn:active { background: #F2F6F4 !important; color: #22312D !important; }
+
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

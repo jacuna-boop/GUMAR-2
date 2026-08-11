@@ -3,7 +3,7 @@ import {
   Plus, X, ChevronRight, ChevronDown, Sun, FileCheck, Zap, MapPin, Calendar,
   AlertTriangle, CheckCircle2, Circle, Trash2, Loader2, FileDown, Save,
   LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste, Clock, Paperclip, FileUp, Users, Link2,
-  Landmark, Search,
+  Landmark, Search, Settings,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar, AreaChart, Area } from "recharts";
 import * as XLSX from "xlsx";
@@ -711,21 +711,20 @@ function Dashboard({ session }) {
 
 function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDelete, onEditProject, onManageMembers, onManageCargos, projectData, onExport, onImportFile, onImportText, userEmail, onSignOut, myFullName, onEditName, isAdmin, isLector, canDeleteProjects, canManageUsers }) {
   const fileInputRef = React.useRef(null);
+  const [footerOpen, setFooterOpen] = useState(false);
 
   return (
     <aside className="app-sidebar" style={styles.sidebar}>
       <div style={styles.brand}>
         <img src={gumarLogo} alt="Gumar Proyectos" style={styles.brandLogo} />
-        <div>
-          <div style={styles.brandTitle}>Control de Parques</div>
-          <div style={styles.brandWordmark}>
-            <div style={styles.brandWordmarkLine}>GUMAR</div>
-            <div style={{ ...styles.brandWordmarkLine, marginLeft: "0.15em" }}>PROYECTOS</div>
-          </div>
+        <div style={styles.brandWordmark}>
+          <div style={styles.brandWordmarkLine}>GUMAR</div>
+          <div style={styles.brandWordmarkLine}>PROYECTOS</div>
         </div>
       </div>
 
       <button
+        className="sb-nav-btn"
         style={{ ...styles.overviewNavBtn, ...(view === "overview" ? styles.overviewNavBtnActive : {}) }}
         onClick={onOverview}
       >
@@ -733,7 +732,7 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
       </button>
 
       {canManageUsers && (
-        <button style={styles.overviewNavBtn} onClick={onManageCargos}>
+        <button className="sb-nav-btn" style={styles.overviewNavBtn} onClick={onManageCargos}>
           <Users size={15} /> Cargos y usuarios
         </button>
       )}
@@ -821,26 +820,39 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
         <div style={styles.sharedNote}>
           Conectado como <strong>{myFullName || userEmail}</strong> — solo ves los proyectos a los que te dieron acceso.
         </div>
-        <button style={{ ...styles.footerBtnFull, textAlign: "left", fontSize: 11.5, color: "#3E5850", padding: "4px 0 8px" }} onClick={onEditName}>
-          {myFullName ? "Editar mi nombre" : "Agregar mi nombre"}
-        </button>
-        <div style={styles.footerBtnRow}>
-          <button style={styles.footerBtn} onClick={onExport}>
-            Exportar datos
-          </button>
-          {!isLector && (
-            <button style={styles.footerBtn} onClick={() => fileInputRef.current?.click()}>
-              Importar archivo
+        {footerOpen && (
+          <>
+            <button style={styles.footerBtnFull} onClick={onEditName}>
+              {myFullName ? "Editar mi nombre" : "Agregar mi nombre"}
             </button>
-          )}
-        </div>
-        {!isLector && (
-          <button style={styles.footerBtnFull} onClick={onImportText}>
-            Importar pegando texto
-          </button>
+            <div style={styles.footerBtnRow}>
+              <button style={styles.footerBtn} onClick={onExport}>
+                Exportar datos
+              </button>
+              {!isLector && (
+                <button style={styles.footerBtn} onClick={() => fileInputRef.current?.click()}>
+                  Importar archivo
+                </button>
+              )}
+            </div>
+            {!isLector && (
+              <button style={styles.footerBtnFull} onClick={onImportText}>
+                Importar pegando texto
+              </button>
+            )}
+            <button style={styles.footerBtnFull} onClick={onSignOut}>
+              Cerrar sesión
+            </button>
+          </>
         )}
-        <button style={styles.footerBtnFull} onClick={onSignOut}>
-          Cerrar sesión
+        <button
+          className="sb-nav-btn"
+          style={{ ...styles.footerToggleBtn, ...(footerOpen ? styles.footerToggleBtnActive : {}) }}
+          onClick={() => setFooterOpen((v) => !v)}
+        >
+          <Settings size={14} />
+          <span style={{ flex: 1, textAlign: "left" }}>Más opciones</span>
+          {footerOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
         </button>
         <input
           ref={fileInputRef}
@@ -1093,6 +1105,7 @@ function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExpo
   return (
     <div style={styles.header}>
       <div>
+        <div style={styles.headerEyebrow}>Control de Parques</div>
         <h1 style={styles.h1}>{project.name}</h1>
         <div style={styles.headerMeta}>
           {project.capacity ? `${project.capacity} MWp` : ""}{project.location ? `  ·  ${project.location}` : ""}
@@ -5700,14 +5713,13 @@ const styles = {
     top: 0,
     overflowY: "auto",
   },
-  brand: { display: "flex", alignItems: "center", gap: 10, padding: "4px 4px 8px" },
-  brandLogo: { width: 34, height: 34, borderRadius: 8, objectFit: "cover", flexShrink: 0 },
-  brandTitle: { fontFamily: FONT_BRAND_DISPLAY, fontWeight: 600, fontSize: 15, letterSpacing: 0.2 },
+  brand: { display: "flex", alignItems: "center", gap: 12, padding: "4px 4px 10px" },
+  brandLogo: { width: 48, height: 48, borderRadius: 10, objectFit: "cover", flexShrink: 0 },
   brandSub: { fontSize: 11, color: "#7A8A93", marginTop: 1, fontFamily: FONT_BRAND_BODY },
-  // "GUMAR" / "PROYECTOS" apiladas en 2 líneas, siguiendo la retícula de construcción del
-  // logotipo del manual de marca (interletrado apretado, segunda línea con leve sangría).
-  brandWordmark: { lineHeight: 1.05, marginTop: 3 },
-  brandWordmarkLine: { fontFamily: FONT_BRAND_DISPLAY, fontWeight: 700, fontSize: 11, letterSpacing: 0.6 },
+  // "GUMAR" / "PROYECTOS" apiladas en 2 líneas, mismo tamaño y alineación para que se vean
+  // simétricas entre sí.
+  brandWordmark: { lineHeight: 1.15 },
+  brandWordmarkLine: { fontFamily: FONT_BRAND_DISPLAY, fontWeight: 700, fontSize: 15, letterSpacing: 0.5, color: "#FFFFFF" },
   addProjectBtn: {
     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
     background: BRAND_LIGHT, color: "#1F332C", border: "none", borderRadius: 8,
@@ -5731,12 +5743,12 @@ const styles = {
   projectItemTop: { display: "flex", justifyContent: "space-between", alignItems: "center" },
   projectName: { fontSize: 13.5, fontWeight: 600, fontFamily: FONT_BRAND_DISPLAY, color: "#1F332C" },
   deleteBtn: { background: "none", border: "none", color: "#3E5850", cursor: "pointer", padding: 2 },
-  projectMeta: { fontSize: 11, color: "#3E5850", marginBottom: 8, fontFamily: FONT_MONO },
+  projectMeta: { fontSize: 11, color: "#3E5850", marginBottom: 8, fontFamily: FONT_BRAND_BODY },
   miniBarRow: { display: "flex", alignItems: "center", gap: 6, marginTop: 4 },
   miniBarLabel: { fontSize: 9.5, color: "#3E5850", width: 62, flexShrink: 0, fontFamily: FONT_BRAND_BODY },
   miniBarTrack: { flex: 1, height: 4, background: "#E3E9E6", borderRadius: 4, overflow: "hidden" },
   miniBarFill: { height: "100%", borderRadius: 4 },
-  miniBarPct: { fontSize: 9.5, color: "#1F332C", width: 28, textAlign: "right", fontFamily: FONT_MONO },
+  miniBarPct: { fontSize: 9.5, color: "#1F332C", width: 28, textAlign: "right", fontFamily: FONT_BRAND_BODY },
 
   main: { flex: 1, display: "flex", flexDirection: "column", minWidth: 0 },
   noPrintWrap: { display: "flex", flex: 1, minWidth: 0 },
@@ -5744,6 +5756,7 @@ const styles = {
     padding: "22px 32px 18px", display: "flex", justifyContent: "space-between",
     alignItems: "flex-end", flexWrap: "wrap", gap: 16, background: BRAND_DARK,
   },
+  headerEyebrow: { fontFamily: FONT_BRAND_BODY, fontSize: 11, fontWeight: 600, letterSpacing: 0.8, textTransform: "uppercase", color: "#DCEAE4" },
   h1: { fontFamily: FONT_BRAND_DISPLAY, fontSize: 24, margin: 0, fontWeight: 600, letterSpacing: 0.2, color: "#FFFFFF" },
   headerMeta: { color: "#DCEAE4", fontSize: 12.5, marginTop: 4, fontFamily: FONT_MONO },
   headerRight: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 },
@@ -5899,11 +5912,17 @@ const styles = {
     color: "#1F332C", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, cursor: "pointer",
     fontFamily: FONT_BRAND_BODY, fontWeight: 500,
   },
-  overviewNavBtnActive: { borderColor: BRAND_DARK, background: BRAND_DARK, color: "#FFFFFF" },
+  overviewNavBtnActive: { borderColor: OVERVIEW_LIGHT.card, background: OVERVIEW_LIGHT.card, color: OVERVIEW_LIGHT.textPrimary, fontWeight: 700 },
   footerBtnFull: {
     width: "100%", background: BRAND_LIGHT, border: "1px solid #8FBBAC", color: "#1F332C", borderRadius: 8,
     padding: "8px 6px", fontSize: 11, cursor: "pointer", fontFamily: FONT_BRAND_BODY,
   },
+  footerToggleBtn: {
+    width: "100%", display: "flex", alignItems: "center", gap: 6, background: "none",
+    border: "1px solid #8FBBAC", color: "#DCEAE4", borderRadius: 8,
+    padding: "8px 10px", fontSize: 11.5, cursor: "pointer", fontFamily: FONT_BRAND_BODY, fontWeight: 500,
+  },
+  footerToggleBtnActive: { background: OVERVIEW_LIGHT.card, borderColor: OVERVIEW_LIGHT.card, color: OVERVIEW_LIGHT.textPrimary, fontWeight: 700 },
 
   // Overview / Resumen general screen
   overviewHeader: {
