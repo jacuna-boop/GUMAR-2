@@ -534,15 +534,18 @@ function buildCronogramaBaseFromTemplate() {
   return { tasks, seguimiento: [] };
 }
 
+// Paleta unificada a la gama verde de marca (antes cada categoría tenía un color distinto sin
+// relación con la identidad corporativa) — tonos medios elegidos para que se lean tanto sobre el
+// fondo verde oscuro de la pestaña (Legend) como sobre las tarjetas blancas (puntos/barras por grupo).
 const CAT_STYLE = {
-  OR: { bg: "#3A2E12", fg: "#F5B942", label: "Trámite OR" },
-  Linea: { bg: "#0F2A24", fg: "#4FBF8F", label: "Línea" },
-  Parque: { bg: "#16261B", fg: "#7FD08A", label: "Parque" },
-  Carta: { bg: "#2E1520", fg: "#E77DA8", label: "Carta 9.x" },
-  COD: { bg: "#2E1F0C", fg: "#F2C063", label: "COD" },
-  FPO_FIPPS: { bg: "#122A3A", fg: "#4FA8D8", label: "FPO y FIPPS" },
-  REQ_GEN: { bg: "#1C2A12", fg: "#8FBF4F", label: "Requisitos generales" },
-  REQ_ADI: { bg: "#241B3A", fg: "#A78BFA", label: "Requisitos adicionales" },
+  OR: { bg: "#3A2E12", fg: "#4F8577", label: "Trámite OR" },
+  Linea: { bg: "#0F2A24", fg: "#3F7A68", label: "Línea" },
+  Parque: { bg: "#16261B", fg: "#5DA88C", label: "Parque" },
+  Carta: { bg: "#2E1520", fg: "#6FA88F", label: "Carta 9.x" },
+  COD: { bg: "#2E1F0C", fg: "#457F6B", label: "COD" },
+  FPO_FIPPS: { bg: "#122A3A", fg: "#74A98D", label: "FPO y FIPPS" },
+  REQ_GEN: { bg: "#1C2A12", fg: "#5C9B7C", label: "Requisitos generales" },
+  REQ_ADI: { bg: "#241B3A", fg: "#4A8A6F", label: "Requisitos adicionales" },
 };
 
 const uid = () => Math.random().toString(36).slice(2, 10);

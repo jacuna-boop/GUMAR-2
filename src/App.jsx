@@ -472,37 +472,39 @@ function Dashboard({ session }) {
           {projects.length === 0 ? (
             <EmptyState onAdd={() => setShowAddProject(true)} />
           ) : view === "overview" ? (
-            <>
-              <div style={styles.overviewHeader}>
+            <div style={{ background: OVERVIEW_LIGHT.page, minHeight: "100%" }}>
+              <div style={{ ...styles.overviewHeader, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>
                 <div>
-                  <h1 style={styles.h1}>Resumen general</h1>
-                  <div style={styles.headerMeta}>{projects.length} proyecto{projects.length === 1 ? "" : "s"} activos</div>
+                  <h1 style={{ ...styles.h1, color: OVERVIEW_LIGHT.pageTextPrimary, fontFamily: FONT_BRAND_DISPLAY }}>Resumen general</h1>
+                  <div style={{ ...styles.headerMeta, color: OVERVIEW_LIGHT.pageTextSecondary, fontFamily: FONT_BRAND_BODY }}>
+                    {projects.length} proyecto{projects.length === 1 ? "" : "s"} activos
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <button
                     className="no-print"
-                    style={styles.pdfBtn}
+                    style={{ ...styles.pdfBtn, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_BODY }}
                     onClick={() => { setPrintTarget("general"); setTimeout(() => window.print(), 50); }}
                   >
                     <FileDown size={14} /> Exportar PDF
                   </button>
                   <button
                     className="no-print"
-                    style={styles.pdfBtn}
+                    style={{ ...styles.pdfBtn, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_BODY }}
                     onClick={() => setShowInformePPI01Modal(true)}
                   >
                     <FileDown size={14} /> Exportar informe PP-I-01
                   </button>
                 </div>
               </div>
-              <div style={styles.content}>
+              <div style={{ ...styles.content, fontFamily: FONT_BRAND_BODY }}>
                 <ResumenGeneral
                   projects={projects}
                   projectData={projectData}
                   onOpenProject={(id, targetTab) => { setSelectedId(id); setView("project"); setTab(targetTab || "resumen"); }}
                 />
               </div>
-            </>
+            </div>
           ) : !selected ? (
             <EmptyState onAdd={() => setShowAddProject(true)} />
           ) : (
@@ -716,7 +718,10 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
         <img src={gumarLogo} alt="Gumar Proyectos" style={styles.brandLogo} />
         <div>
           <div style={styles.brandTitle}>Control de Parques</div>
-          <div style={styles.brandTitle}>GUMAR PROYECTOS</div>
+          <div style={styles.brandWordmark}>
+            <div style={styles.brandWordmarkLine}>GUMAR</div>
+            <div style={{ ...styles.brandWordmarkLine, marginLeft: "0.15em" }}>PROYECTOS</div>
+          </div>
         </div>
       </div>
 
@@ -816,7 +821,7 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
         <div style={styles.sharedNote}>
           Conectado como <strong>{myFullName || userEmail}</strong> — solo ves los proyectos a los que te dieron acceso.
         </div>
-        <button style={{ ...styles.footerBtnFull, textAlign: "left", fontSize: 11.5, color: "#7A8A93", padding: "4px 0 8px" }} onClick={onEditName}>
+        <button style={{ ...styles.footerBtnFull, textAlign: "left", fontSize: 11.5, color: "#3E5850", padding: "4px 0 8px" }} onClick={onEditName}>
           {myFullName ? "Editar mi nombre" : "Agregar mi nombre"}
         </button>
         <div style={styles.footerBtnRow}>
@@ -1189,68 +1194,76 @@ function Resumen({ data, setTab, onChangeInfo }) {
   const nextUpme = upmeNextStep(data.upme);
   const alerts = buildProjectAlerts(data);
 
+  // Piloto de tema claro extendido a Resumen (por proyecto) — mismo patrón que el resto: no se toca
+  // `styles.card`/`cardHead`/`cardSub` (compartidos con TODA la app), overrides locales aquí.
+  const lightCard = { ...styles.card, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightCardHead = { ...styles.cardHead, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_DISPLAY };
+  const lightCardSub = { ...styles.cardSub, color: OVERVIEW_LIGHT.textSecondary };
+
   return (
+    <div style={{ background: OVERVIEW_LIGHT.page, margin: "-26px -32px -60px", padding: "26px 32px 60px", minHeight: "100vh" }}>
     <div style={styles.resumenGrid} className="app-resumen-grid">
       <div
-        style={{ ...styles.card, ...styles.cardClickable }}
+        style={{ ...lightCard, ...styles.cardClickable }}
         role="button"
         onClick={() => setTab?.("balance")}
       >
-        <div style={styles.cardHead}>
-          <Landmark size={16} color="#A78BFA" />
+        <div style={lightCardHead}>
+          <Landmark size={16} color={BRAND_DARK} />
           <span>Balance financiero</span>
         </div>
-        <div style={{ fontFamily: FONT_MONO, fontSize: 24, fontWeight: 700, color: balTotals.saldo >= 0 ? "#7FD08A" : "#E2604F" }}>
+        <div style={{ fontFamily: FONT_MONO, fontSize: 24, fontWeight: 700, color: balTotals.saldo >= 0 ? BRAND_DARK : "#E2604F" }}>
           {fmtMoney(balTotals.saldo)}
         </div>
-        <div style={styles.cardSub}>
+        <div style={lightCardSub}>
           Ingresos {fmtMoney(balTotals.totalIngresos)} · Pagos {fmtMoney(balTotals.totalPagos)}
         </div>
       </div>
 
       <div
-        style={{ ...styles.card, ...styles.cardClickable }}
+        style={{ ...lightCard, ...styles.cardClickable }}
         role="button"
         onClick={() => setTab?.("upme")}
       >
-        <div style={styles.cardHead}>
-          <FileCheck size={16} color="#4FA8D8" />
+        <div style={lightCardHead}>
+          <FileCheck size={16} color={BRAND_DARK} />
           <span>Beneficios tributarios UPME</span>
         </div>
-        <BigPct pct={upmePct} color="#4FA8D8" />
-        <div style={styles.cardSub}>{nextUpme ? `Siguiente paso: ${nextUpme.num}. ${nextUpme.label}` : "Proceso completado"}</div>
+        <BigPct pct={upmePct} color={BRAND_DARK} trackColor="#E3E9E6" />
+        <div style={lightCardSub}>{nextUpme ? `Siguiente paso: ${nextUpme.num}. ${nextUpme.label}` : "Proceso completado"}</div>
       </div>
 
       <div
-        style={{ ...styles.card, ...styles.cardClickable }}
+        style={{ ...lightCard, ...styles.cardClickable }}
         role="button"
         onClick={() => setTab?.("energizacion")}
       >
-        <div style={styles.cardHead}>
-          <Zap size={16} color="#F5B942" />
+        <div style={lightCardHead}>
+          <Zap size={16} color={BRAND_DARK} />
           <span>Energización</span>
         </div>
-        <BigPct pct={enerPct} color="#F5B942" />
-        <div style={styles.cardSub}>
+        <BigPct pct={enerPct} color={BRAND_DARK} trackColor="#E3E9E6" />
+        <div style={lightCardSub}>
           {elapsed === null ? "Falta asignar fecha de inicio de trámites" : `Día ${elapsed} de 200`} · {nextMs ? `Siguiente: ${nextMs.title} (día ${nextMs.day})` : "Todas las actividades completadas"}
         </div>
       </div>
 
       <div
-        style={{ ...styles.card, ...styles.cardClickable }}
+        style={{ ...lightCard, ...styles.cardClickable }}
         role="button"
         onClick={() => setTab?.("presupuesto")}
       >
-        <div style={styles.cardHead}>
-          <DollarSign size={16} color="#7FD08A" />
+        <div style={lightCardHead}>
+          <DollarSign size={16} color={BRAND_DARK} />
           <span>Presupuesto</span>
         </div>
         <BigPct
           pct={Math.min(100, Math.abs(desviacionPct))}
-          color={desviacionPct > 0 ? "#E2604F" : "#7FD08A"}
+          color={desviacionPct > 0 ? "#E2604F" : BRAND_DARK}
           label={`${desviacionPct > 0 ? "+" : ""}${desviacionPct}%`}
+          trackColor="#E3E9E6"
         />
-        <div style={styles.cardSub}>
+        <div style={lightCardSub}>
           Desviación vs. base: {presTotals.diferencia > 0 ? "+" : ""}{fmtMoney(presTotals.diferencia)}
           <br />
           Base {fmtMoney(presTotals.base)} · Ejecución {fmtMoney(presTotals.ejecutado)}
@@ -1258,37 +1271,38 @@ function Resumen({ data, setTab, onChangeInfo }) {
       </div>
 
       <div
-        style={{ ...styles.card, ...styles.cardClickable }}
+        style={{ ...lightCard, ...styles.cardClickable }}
         role="button"
         onClick={() => setTab?.("pagos")}
       >
-        <div style={styles.cardHead}>
-          <Wallet size={16} color="#E77DA8" />
+        <div style={lightCardHead}>
+          <Wallet size={16} color={BRAND_DARK} />
           <span>Pagos</span>
         </div>
-        <BigPct pct={pagTotals.totalOrdenes ? Math.round((pagTotals.totalPagado / pagTotals.totalOrdenes) * 100) : 0} color="#E77DA8" />
-        <div style={styles.cardSub}>
+        <BigPct pct={pagTotals.totalOrdenes ? Math.round((pagTotals.totalPagado / pagTotals.totalOrdenes) * 100) : 0} color={BRAND_DARK} trackColor="#E3E9E6" />
+        <div style={lightCardSub}>
           {fmtMoney(pagTotals.totalPagado)} pagado de {fmtMoney(pagTotals.totalOrdenes)} · saldo {fmtMoney(pagTotals.totalSaldo)}
         </div>
       </div>
 
-      <div style={{ ...styles.card, gridColumn: "1 / -1" }}>
-        <div style={styles.cardHead}>
+      <div style={{ ...lightCard, gridColumn: "1 / -1" }}>
+        <div style={lightCardHead}>
           <AlertTriangle size={16} color="#E8A33D" />
           <span>Alertas</span>
         </div>
         {alerts.length === 0 ? (
-          <div style={styles.cardSub}>Sin alertas por ahora.</div>
+          <div style={lightCardSub}>Sin alertas por ahora.</div>
         ) : (
           <ul style={styles.alertList}>
             {alerts.map((a, i) => (
-              <li key={i} style={styles.alertItem}>{a.texto}</li>
+              <li key={i} style={{ ...styles.alertItem, color: "#B5790F" }}>{a.texto}</li>
             ))}
           </ul>
         )}
       </div>
 
       {onChangeInfo && <ProyectoInfoSection info={data.info} pagos={data.pagos} onChange={onChangeInfo} />}
+    </div>
     </div>
   );
 }
@@ -1323,31 +1337,41 @@ function ProyectoInfoSection({ info, pagos, onChange }) {
     onChange({ ...info, cortesObra: { contratistas: info.cortesObra.contratistas.map((c) => (c.proveedor === proveedor ? { ...c, reteobra } : c)) } });
   };
   const cortes = buildCortesObra(pagos, info.cortesObra);
-  const fichaLabel = { fontSize: 11, fontWeight: 700, color: "#7A8A93", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 };
-  const fichaField = { ...styles.miniInput, marginBottom: 6 };
+  const fichaLabel = { fontSize: 11, fontWeight: 700, color: OVERVIEW_LIGHT.textSecondary, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 };
+  const lightCard = { ...styles.card, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightCardHead = { ...styles.cardHead, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_DISPLAY };
+  const lightCardSub = { ...styles.cardSub, color: OVERVIEW_LIGHT.textSecondary };
+  const lightMiniInput = { ...styles.miniInput, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const fichaField = { ...lightMiniInput, marginBottom: 6 };
+  const lightRowDeleteBtn = { ...styles.rowDeleteBtn, color: "#8FA39B" };
+  const lightAddRowBtn = { ...styles.addRowBtn, background: BRAND_DARK, color: "#FFFFFF" };
+  const lightTableWrap = { ...styles.cronoTableWrap, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTh = { ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTd = { ...styles.ovTd, color: OVERVIEW_LIGHT.textPrimary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightExportHint = { ...styles.exportHint, color: OVERVIEW_LIGHT.textSecondary };
 
   return (
     <>
-      <div style={{ ...styles.card, gridColumn: "1 / -1" }}>
-        <div style={styles.cardHead}><Users size={16} color="#4FA8D8" /><span>Equipo de trabajo</span></div>
+      <div style={{ ...lightCard, gridColumn: "1 / -1" }}>
+        <div style={lightCardHead}><Users size={16} color="#4FA8D8" /><span>Equipo de trabajo</span></div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
           {info.equipo.map((m) => (
             <div key={m.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input style={{ ...styles.miniInput, flex: 1 }} placeholder="Cargo" value={m.cargo} onChange={(e) => updateMiembro(m.id, { cargo: e.target.value })} />
-              <input style={{ ...styles.miniInput, flex: 1 }} placeholder="Nombre" value={m.nombre} onChange={(e) => updateMiembro(m.id, { nombre: e.target.value })} />
-              <button style={styles.rowDeleteBtn} onClick={() => deleteMiembro(m.id)}><Trash2 size={13} /></button>
+              <input style={{ ...lightMiniInput, flex: 1 }} placeholder="Cargo" value={m.cargo} onChange={(e) => updateMiembro(m.id, { cargo: e.target.value })} />
+              <input style={{ ...lightMiniInput, flex: 1 }} placeholder="Nombre" value={m.nombre} onChange={(e) => updateMiembro(m.id, { nombre: e.target.value })} />
+              <button style={lightRowDeleteBtn} onClick={() => deleteMiembro(m.id)}><Trash2 size={13} /></button>
             </div>
           ))}
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input style={{ ...styles.miniInput, flex: 1 }} placeholder="Cargo (ej. Residente de obra)" value={newMiembro.cargo} onChange={(e) => setNewMiembro({ ...newMiembro, cargo: e.target.value })} />
-            <input style={{ ...styles.miniInput, flex: 1 }} placeholder="Nombre" value={newMiembro.nombre} onChange={(e) => setNewMiembro({ ...newMiembro, nombre: e.target.value })} />
-            <button style={styles.addRowBtn} onClick={addMiembro}><Plus size={14} /></button>
+            <input style={{ ...lightMiniInput, flex: 1 }} placeholder="Cargo (ej. Residente de obra)" value={newMiembro.cargo} onChange={(e) => setNewMiembro({ ...newMiembro, cargo: e.target.value })} />
+            <input style={{ ...lightMiniInput, flex: 1 }} placeholder="Nombre" value={newMiembro.nombre} onChange={(e) => setNewMiembro({ ...newMiembro, nombre: e.target.value })} />
+            <button style={lightAddRowBtn} onClick={addMiembro}><Plus size={14} /></button>
           </div>
         </div>
       </div>
 
-      <div style={{ ...styles.card, gridColumn: "1 / -1" }}>
-        <div style={styles.cardHead}><FileCheck size={16} color="#7FD08A" /><span>Ficha técnica</span></div>
+      <div style={{ ...lightCard, gridColumn: "1 / -1" }}>
+        <div style={lightCardHead}><FileCheck size={16} color="#7FD08A" /><span>Ficha técnica</span></div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginTop: 10 }}>
           <div>
             <div style={fichaLabel}>Paneles solares</div>
@@ -1377,11 +1401,11 @@ function ProyectoInfoSection({ info, pagos, onChange }) {
         </div>
       </div>
 
-      <div style={{ ...styles.card, gridColumn: "1 / -1" }}>
-        <div style={styles.cardHead}><Wallet size={16} color="#E77DA8" /><span>Cortes de obra</span></div>
-        <p style={styles.exportHint}>Marca qué proveedores de Pagos cuentan como contratista de obra, y digita su retención (reteobra).</p>
+      <div style={{ ...lightCard, gridColumn: "1 / -1" }}>
+        <div style={lightCardHead}><Wallet size={16} color="#E77DA8" /><span>Cortes de obra</span></div>
+        <p style={lightExportHint}>Marca qué proveedores de Pagos cuentan como contratista de obra, y digita su retención (reteobra).</p>
         {proveedores.length === 0 ? (
-          <div style={styles.cardSub}>Todavía no hay proveedores registrados en Pagos.</div>
+          <div style={lightCardSub}>Todavía no hay proveedores registrados en Pagos.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
             {proveedores.map((prov) => {
@@ -1389,9 +1413,9 @@ function ProyectoInfoSection({ info, pagos, onChange }) {
               return (
                 <div key={prov} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="checkbox" checked={!!c?.incluir} onChange={(e) => toggleContratista(prov, e.target.checked)} />
-                  <span style={{ flex: 1, fontSize: 12.5, color: "#E8EDEF" }}>{prov}</span>
+                  <span style={{ flex: 1, fontSize: 12.5, color: OVERVIEW_LIGHT.textPrimary }}>{prov}</span>
                   {c?.incluir && (
-                    <MoneyInput style={{ ...styles.miniInput, width: 140 }} placeholder="Reteobra" value={c.reteobra} onChange={(val) => updateReteobra(prov, val)} />
+                    <MoneyInput style={{ ...lightMiniInput, width: 140 }} placeholder="Reteobra" value={c.reteobra} onChange={(val) => updateReteobra(prov, val)} />
                   )}
                 </div>
               );
@@ -1399,25 +1423,25 @@ function ProyectoInfoSection({ info, pagos, onChange }) {
           </div>
         )}
         {cortes.length > 0 && (
-          <div style={styles.cronoTableWrap}>
+          <div style={lightTableWrap}>
             <table style={styles.overviewTable}>
               <thead>
                 <tr>
-                  <th style={styles.ovTh}>Contratista</th>
-                  <th style={styles.ovTh}># de corte</th>
-                  <th style={styles.ovTh}>Vr acumulado</th>
-                  <th style={styles.ovTh}>Reteobra</th>
-                  <th style={styles.ovTh}>Saldo</th>
+                  <th style={lightOvTh}>Contratista</th>
+                  <th style={lightOvTh}># de corte</th>
+                  <th style={lightOvTh}>Vr acumulado</th>
+                  <th style={lightOvTh}>Reteobra</th>
+                  <th style={lightOvTh}>Saldo</th>
                 </tr>
               </thead>
               <tbody>
                 {cortes.map((c) => (
                   <tr key={c.proveedor}>
-                    <td style={styles.ovTd}>{c.proveedor}</td>
-                    <td style={styles.ovTd}>{c.numCortes}</td>
-                    <td style={styles.ovTd}>{fmtMoney(c.vrAcumulado)}</td>
-                    <td style={styles.ovTd}>{fmtMoney(c.reteobra)}</td>
-                    <td style={{ ...styles.ovTd, fontWeight: 700 }}>{fmtMoney(c.saldo)}</td>
+                    <td style={lightOvTd}>{c.proveedor}</td>
+                    <td style={lightOvTd}>{c.numCortes}</td>
+                    <td style={lightOvTd}>{fmtMoney(c.vrAcumulado)}</td>
+                    <td style={lightOvTd}>{fmtMoney(c.reteobra)}</td>
+                    <td style={{ ...lightOvTd, fontWeight: 700 }}>{fmtMoney(c.saldo)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1428,6 +1452,28 @@ function ProyectoInfoSection({ info, pagos, onChange }) {
     </>
   );
 }
+
+// Piloto de tema claro (identidad corporativa GUMAR) para "Resumen general" — ver
+// C:\Users\disen\.claude\plans\sparkling-kindling-book.md para el porqué de este alcance.
+// Los hex de marca (BRAND_DARK/BRAND_LIGHT) vienen del manual de identidad corporativa; el resto
+// de OVERVIEW_LIGHT son tonos neutros derivados razonables. Deliberadamente NO se toca el objeto
+// `styles` compartido — estos overrides solo aplican dentro de esta vista, spreadeados encima de
+// styles.card/etc. en los sitios donde se usan, así ninguna otra pestaña se ve afectada.
+const BRAND_DARK = "#6B8E89";
+const BRAND_LIGHT = "#A9D3C4";
+const OFF_WHITE = "#F2F6F4"; // blanco suave (no puro #FFFFFF), con un toque del verde de marca
+const OVERVIEW_LIGHT = {
+  page: BRAND_DARK,  // fondo general: verde oscuro
+  card: OFF_WHITE,   // tarjetas/superficies: blanco suave (antes verde claro)
+  border: "#8FBBAC",
+  barTrack: "#E3E9E6", // fondo de las barras de progreso (gris neutro, no verde saturado)
+  textPrimary: "#22312D",   // texto sobre tarjetas (verde claro)
+  textSecondary: "#3E5850", // texto secundario sobre tarjetas (verde claro)
+  pageTextPrimary: "#FFFFFF",   // texto directo sobre el fondo (verde oscuro)
+  pageTextSecondary: "#DCEAE4", // texto secundario directo sobre el fondo (verde oscuro)
+};
+const FONT_BRAND_DISPLAY = "'Montserrat', 'Segoe UI', sans-serif";
+const FONT_BRAND_BODY = "'Lato', 'Segoe UI', sans-serif";
 
 function ResumenGeneral({ projects, projectData, onOpenProject }) {
   if (projects.length === 0) {
@@ -1459,53 +1505,56 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
   // Plata en riesgo: suma de los sobrecostos (solo donde ejecución > base) entre todos los proyectos.
   const plataEnRiesgo = loaded.reduce((s, r) => s + Math.max(0, r.pres.diferencia), 0);
 
+  const statCard = { ...styles.overviewStat, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const statLabel = { ...styles.overviewStatLabel, color: OVERVIEW_LIGHT.textSecondary };
+
   return (
     <div>
       <div style={styles.overviewStatRow} className="app-stat-row">
-        <div style={styles.overviewStat}>
-          <div style={styles.overviewStatNum}>{projects.length}</div>
-          <div style={styles.overviewStatLabel}>Proyectos</div>
+        <div style={statCard}>
+          <div style={{ ...styles.overviewStatNum, color: OVERVIEW_LIGHT.textPrimary }}>{projects.length}</div>
+          <div style={statLabel}>Proyectos</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, color: "#4FA8D8" }}>{avgUpme}%</div>
-          <div style={styles.overviewStatLabel}>Avance UPME promedio</div>
+        <div style={statCard}>
+          <div style={{ ...styles.overviewStatNum, color: BRAND_DARK }}>{avgUpme}%</div>
+          <div style={statLabel}>Avance UPME promedio</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, color: "#F5B942" }}>{avgEner}%</div>
-          <div style={styles.overviewStatLabel}>Avance energización promedio</div>
+        <div style={statCard}>
+          <div style={{ ...styles.overviewStatNum, color: BRAND_DARK }}>{avgEner}%</div>
+          <div style={statLabel}>Avance energización promedio</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, color: delayedCount ? "#E2604F" : "#5FBF8F" }}>{delayedCount}</div>
-          <div style={styles.overviewStatLabel}>Proyectos atrasados</div>
+        <div style={statCard}>
+          <div style={{ ...styles.overviewStatNum, color: delayedCount ? "#E2604F" : BRAND_DARK }}>{delayedCount}</div>
+          <div style={statLabel}>Proyectos atrasados</div>
         </div>
       </div>
 
       <div style={styles.overviewStatRow} className="app-stat-row">
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: "#7FD08A" }}>{fmtMoney(totalBase)}</div>
-          <div style={styles.overviewStatLabel}>Presupuesto base (todos los proyectos)</div>
+        <div style={statCard}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: BRAND_DARK }}>{fmtMoney(totalBase)}</div>
+          <div style={statLabel}>Presupuesto base (todos los proyectos)</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: "#7FD08A" }}>{fmtMoney(totalEjecutado)}</div>
-          <div style={styles.overviewStatLabel}>Presupuesto ejecución (todos)</div>
+        <div style={statCard}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: BRAND_DARK }}>{fmtMoney(totalEjecutado)}</div>
+          <div style={statLabel}>Presupuesto ejecución (todos)</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}>{fmtMoney(totalSaldo)}</div>
-          <div style={styles.overviewStatLabel}>Saldo pendiente por pagar (todos)</div>
+        <div style={statCard}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: totalSaldo > 0 ? "#C98A1E" : BRAND_DARK }}>{fmtMoney(totalSaldo)}</div>
+          <div style={statLabel}>Saldo pendiente por pagar (todos)</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: plataEnRiesgo > 0 ? "#E2604F" : "#5FBF8F" }}>{fmtMoney(plataEnRiesgo)}</div>
-          <div style={styles.overviewStatLabel}>Plata en riesgo (sobrecostos, todos)</div>
+        <div style={statCard}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 17, color: plataEnRiesgo > 0 ? "#E2604F" : BRAND_DARK }}>{fmtMoney(plataEnRiesgo)}</div>
+          <div style={statLabel}>Plata en riesgo (sobrecostos, todos)</div>
         </div>
       </div>
 
-      <div style={{ ...styles.card, marginBottom: 22 }}>
-        <div style={styles.cardHead}>
-          <AlertTriangle size={16} color="#E8A33D" />
+      <div style={{ ...styles.card, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, marginBottom: 22 }}>
+        <div style={{ ...styles.cardHead, color: OVERVIEW_LIGHT.textPrimary }}>
+          <AlertTriangle size={16} color="#C98A1E" />
           <span>Alertas por proyecto</span>
         </div>
         {projectsWithAlerts.length === 0 ? (
-          <div style={styles.cardSub}>Sin alertas por ahora.</div>
+          <div style={{ ...styles.cardSub, color: OVERVIEW_LIGHT.textSecondary }}>Sin alertas por ahora.</div>
         ) : (
           <div style={styles.alertsByProjectList}>
             {projectsWithAlerts.map(({ project: p, alerts }) => {
@@ -1514,7 +1563,7 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
               return (
                 <div key={p.id} style={styles.alertsByProjectGroup}>
                   <div
-                    style={styles.alertsByProjectName}
+                    style={{ ...styles.alertsByProjectName, color: OVERVIEW_LIGHT.textPrimary }}
                     role="button"
                     onClick={() => onOpenProject(p.id, "resumen")}
                   >
@@ -1522,7 +1571,7 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
                   </div>
                   <div style={styles.alertModuloTagRow}>
                     {Array.from(counts.entries()).map(([modulo, count]) => (
-                      <span key={modulo} style={styles.alertModuloTag}>{modulo} ({count})</span>
+                      <span key={modulo} style={{ ...styles.alertModuloTag, background: BRAND_DARK, color: "#FFFFFF", border: "none" }}>{modulo} ({count})</span>
                     ))}
                   </div>
                 </div>
@@ -1532,65 +1581,68 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
         )}
       </div>
 
-      <div style={styles.overviewTableWrap}>
+      <div style={{ ...styles.overviewTableWrap, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` }}>
         <table style={styles.overviewTable}>
           <thead>
             <tr>
-              <th style={styles.ovTh}>Proyecto</th>
-              <th style={styles.ovTh}>UPME</th>
-              <th style={styles.ovTh}>Energización</th>
-              <th style={styles.ovTh}>Presupuesto</th>
-              <th style={styles.ovTh}>Saldo pendiente</th>
-              <th style={styles.ovTh}>Día</th>
-              <th style={styles.ovTh}>Siguiente hito</th>
+              <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>Proyecto</th>
+              <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>UPME</th>
+              <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>Energización</th>
+              <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>Presupuesto</th>
+              <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>Saldo pendiente</th>
+              <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>Día</th>
+              <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>Siguiente hito</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ project: p, loading, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag }) => (
-              <tr key={p.id} style={styles.ovRow} onClick={() => onOpenProject(p.id, "resumen")}>
-                <td style={styles.ovTdName}>
-                  <div style={{ fontWeight: 600 }}>{p.name}</div>
-                  <div style={styles.ovTdMeta}>{p.capacity ? `${p.capacity} MWp` : ""}{p.location ? ` · ${p.location}` : ""}</div>
-                </td>
-                {loading ? (
-                  <td colSpan={6} style={styles.ovTd}>Cargando…</td>
-                ) : (
-                  <>
-                    <td
-                      style={styles.ovTd}
-                      onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "upme"); }}
-                    >
-                      <OvBar pct={upmePct} color="#4FA8D8" />
-                    </td>
-                    <td
-                      style={styles.ovTd}
-                      onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "energizacion"); }}
-                    >
-                      <OvBar pct={enerPct} color="#F5B942" />
-                    </td>
-                    <td
-                      style={styles.ovTd}
-                      onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "presupuesto"); }}
-                    >
-                      <OvBar pct={pres.pct} color={pres.pct > 100 ? "#E2604F" : "#7FD08A"} />
-                    </td>
-                    <td
-                      style={{ ...styles.ovTd, color: pag.totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}
-                      onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "pagos"); }}
-                    >
-                      {fmtMoney(pag.totalSaldo)}
-                    </td>
-                    <td style={styles.ovTd}>{elapsed === null ? "—" : `${elapsed} / 200`}</td>
-                    <td
-                      style={{ ...styles.ovTd, color: delayed ? "#E2604F" : "#B9C4CA" }}
-                      onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "energizacion"); }}
-                    >
-                      {nextMs ? `${nextMs.title} (día ${nextMs.day})${delayed ? " · atrasado" : ""}` : "Completado"}
-                    </td>
-                  </>
-                )}
-              </tr>
-            ))}
+            {rows.map(({ project: p, loading, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag }) => {
+              const ovTdLight = { ...styles.ovTd, color: OVERVIEW_LIGHT.textPrimary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+              return (
+                <tr key={p.id} style={styles.ovRow} onClick={() => onOpenProject(p.id, "resumen")}>
+                  <td style={{ ...styles.ovTdName, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textPrimary }}>
+                    <div style={{ fontWeight: 600 }}>{p.name}</div>
+                    <div style={{ ...styles.ovTdMeta, color: OVERVIEW_LIGHT.textSecondary }}>{p.capacity ? `${p.capacity} MWp` : ""}{p.location ? ` · ${p.location}` : ""}</div>
+                  </td>
+                  {loading ? (
+                    <td colSpan={6} style={ovTdLight}>Cargando…</td>
+                  ) : (
+                    <>
+                      <td
+                        style={ovTdLight}
+                        onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "upme"); }}
+                      >
+                        <OvBar pct={upmePct} color={BRAND_DARK} trackColor={OVERVIEW_LIGHT.barTrack} />
+                      </td>
+                      <td
+                        style={ovTdLight}
+                        onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "energizacion"); }}
+                      >
+                        <OvBar pct={enerPct} color={BRAND_DARK} trackColor={OVERVIEW_LIGHT.barTrack} />
+                      </td>
+                      <td
+                        style={ovTdLight}
+                        onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "presupuesto"); }}
+                      >
+                        <OvBar pct={pres.pct} color={pres.pct > 100 ? "#E2604F" : BRAND_DARK} trackColor={OVERVIEW_LIGHT.barTrack} />
+                      </td>
+                      <td
+                        style={{ ...ovTdLight, color: pag.totalSaldo > 0 ? "#B5790F" : BRAND_DARK }}
+                        onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "pagos"); }}
+                      >
+                        {fmtMoney(pag.totalSaldo)}
+                      </td>
+                      <td style={ovTdLight}>{elapsed === null ? "—" : `${elapsed} / 200`}</td>
+                      <td
+                        style={{ ...ovTdLight, color: delayed ? "#E2604F" : OVERVIEW_LIGHT.textSecondary }}
+                        onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "energizacion"); }}
+                      >
+                        {nextMs ? `${nextMs.title} (día ${nextMs.day})${delayed ? " · atrasado" : ""}` : "Completado"}
+                      </td>
+                    </>
+                  )}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1598,10 +1650,10 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
   );
 }
 
-function OvBar({ pct, color, label }) {
+function OvBar({ pct, color, label, trackColor }) {
   return (
     <div style={styles.ovBarWrap}>
-      <div style={styles.ovBarTrack}>
+      <div style={{ ...styles.ovBarTrack, ...(trackColor ? { background: trackColor } : {}) }}>
         <div style={{ ...styles.ovBarFill, width: `${pct}%`, background: color }} />
       </div>
       <span style={{ ...styles.ovBarPct, color }}>{label ?? `${pct}%`}</span>
@@ -1609,10 +1661,10 @@ function OvBar({ pct, color, label }) {
   );
 }
 
-function BigPct({ pct, color, label }) {
+function BigPct({ pct, color, label, trackColor }) {
   return (
     <div style={styles.bigPctWrap}>
-      <div style={styles.bigPctTrack}>
+      <div style={{ ...styles.bigPctTrack, ...(trackColor ? { background: trackColor } : {}) }}>
         <div style={{ ...styles.bigPctFill, width: `${pct}%`, background: color }} />
       </div>
       <span style={{ ...styles.bigPctNum, color }}>{label ?? `${pct}%`}</span>
@@ -1635,11 +1687,21 @@ function UpmeModule({ data, onChange, projectId, isLector }) {
   const active = upmeActiveSteps(data);
   const doneCount = active.filter((s) => data.steps[s.id]?.completado).length;
 
+  // Piloto de tema claro (identidad corporativa GUMAR) extendido a la pestaña UPME — mismo patrón
+  // que ResumenGeneral: no se toca el objeto `styles` compartido (dateField/input/presSubTabBtn se
+  // usan en otras pestañas todavía oscuras), los overrides van locales aquí. El fondo claro se
+  // "sangra" por encima del padding de styles.content con márgenes negativos para cubrir todo el
+  // área de la pestaña sin tocar ese estilo compartido.
+  const lightDateField = { ...styles.dateField, color: OVERVIEW_LIGHT.textSecondary, fontFamily: FONT_BRAND_BODY };
+  const lightInput = { ...styles.input, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightSubTabBtn = { ...styles.presSubTabBtn, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textSecondary, fontFamily: FONT_BRAND_BODY };
+  const lightSubTabBtnActive = { borderColor: BRAND_DARK, background: BRAND_DARK, color: "#FFFFFF" };
+
   return (
-    <div>
-      <div style={styles.cronoHead}>
-        <h3 style={styles.h3}>Beneficios tributarios — trámite ante la UPME</h3>
-        <span style={styles.pesoTotalTag}>{doneCount} de {active.length} pasos completados</span>
+    <div style={{ background: OVERVIEW_LIGHT.page, margin: "-26px -32px -60px", padding: "26px 32px 60px", minHeight: "100vh" }}>
+      <div style={{ ...styles.cronoHead }}>
+        <h3 style={{ ...styles.h3, color: "#FFFFFF", fontFamily: FONT_BRAND_DISPLAY }}>Beneficios tributarios — trámite ante la UPME</h3>
+        <span style={{ ...styles.pesoTotalTag, color: "#FFFFFF" }}>{doneCount} de {active.length} pasos completados</span>
       </div>
 
       <div style={styles.upmeStepList}>
@@ -1655,9 +1717,9 @@ function UpmeModule({ data, onChange, projectId, isLector }) {
                   onClick={skipped ? undefined : () => updateStep(s.id, { completado: !st.completado })}
                   style={{
                     ...styles.upmeStepNum,
-                    background: skipped ? "#232D33" : st.completado ? "#5FBF8F" : "#1C242A",
-                    color: skipped ? "#5A6870" : st.completado ? "#0F1417" : "#E8EDEF",
-                    borderColor: skipped ? "#2A3339" : st.completado ? "#5FBF8F" : "#4FA8D8",
+                    background: skipped ? "#E3E9E6" : st.completado ? BRAND_DARK : "#FFFFFF",
+                    color: skipped ? "#8FA39B" : st.completado ? "#FFFFFF" : BRAND_DARK,
+                    borderColor: skipped ? "#C7D6D0" : BRAND_DARK,
                     cursor: skipped ? "default" : "pointer",
                     padding: 0,
                   }}
@@ -1665,7 +1727,7 @@ function UpmeModule({ data, onChange, projectId, isLector }) {
                   {st.completado && !skipped ? <Check size={14} /> : s.num}
                 </button>
                 <div style={{ flex: 1 }}>
-                  <div style={{ ...styles.upmeStepLabel, ...(skipped ? { color: "#5A6870", textDecoration: "line-through" } : {}) }}>
+                  <div style={{ ...styles.upmeStepLabel, ...(skipped ? { color: "#8FA39B", textDecoration: "line-through" } : {}) }}>
                     {s.label}
                   </div>
                   {skipped && <div style={styles.upmeSkippedTag}>Omitido según la respuesta anterior</div>}
@@ -1683,12 +1745,12 @@ function UpmeModule({ data, onChange, projectId, isLector }) {
 
               {!skipped && (
                 <div style={styles.upmeStepBody}>
-                  <label style={styles.dateField}>
+                  <label style={lightDateField}>
                     <span>Fecha</span>
-                    <input type="date" style={styles.input} value={st.fecha} onChange={(e) => updateStep(s.id, { fecha: e.target.value })} />
+                    <input type="date" style={lightInput} value={st.fecha} onChange={(e) => updateStep(s.id, { fecha: e.target.value })} />
                   </label>
                   <input
-                    style={{ ...styles.input, flex: 1, minWidth: 160 }}
+                    style={{ ...lightInput, flex: 1, minWidth: 160 }}
                     placeholder="Notas (opcional)"
                     value={st.notas}
                     onChange={(e) => updateStep(s.id, { notas: e.target.value })}
@@ -1698,13 +1760,13 @@ function UpmeModule({ data, onChange, projectId, isLector }) {
                       <span>{s.decision.question}</span>
                       <div style={{ display: "flex", gap: 6 }}>
                         <button
-                          style={{ ...styles.presSubTabBtn, ...(st.decision === "si" ? styles.presSubTabBtnActive : {}) }}
+                          style={{ ...lightSubTabBtn, ...(st.decision === "si" ? lightSubTabBtnActive : {}) }}
                           onClick={() => updateStep(s.id, { decision: "si" })}
                         >
                           Sí
                         </button>
                         <button
-                          style={{ ...styles.presSubTabBtn, ...(st.decision === "no" ? styles.presSubTabBtnActive : {}) }}
+                          style={{ ...lightSubTabBtn, ...(st.decision === "no" ? lightSubTabBtnActive : {}) }}
                           onClick={() => updateStep(s.id, { decision: "no" })}
                         >
                           No
@@ -1752,43 +1814,54 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
 
   const overallPct = energizacionProgress(data);
 
+  // Piloto de tema claro extendido a Energización — mismo patrón que UPME: los estilos exclusivos
+  // de este módulo (ener*/wbs*) se editan directo en `styles`, y los compartidos (dateField/input/
+  // cardHead/chartBox/pagosAlertBox/miniInput, usados también por otras pestañas aún oscuras) se
+  // sobreescriben localmente aquí.
+  const lightDateField = { ...styles.dateField, color: "#FFFFFF", fontFamily: FONT_BRAND_BODY };
+  const lightInput = { ...styles.input, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightCardHead = { ...styles.cardHead, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_DISPLAY };
+  const lightChartBox = { ...styles.chartBox, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightAlertBox = { ...styles.pagosAlertBox, background: OVERVIEW_LIGHT.card, border: "1px solid #E8A33D88" };
+  const lightMiniInput = { ...styles.miniInput, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+
   return (
-    <div>
+    <div style={{ background: OVERVIEW_LIGHT.page, margin: "-26px -32px -60px", padding: "26px 32px 60px", minHeight: "100vh" }}>
       <div style={styles.enerHeadRow}>
-        <label style={styles.dateField}>
+        <label style={lightDateField}>
           <span>Fecha de inicio del proceso (Día 0)</span>
           <input
             type="date"
             value={data.fechaInicio}
             onChange={(e) => onChange({ ...data, fechaInicio: e.target.value })}
-            style={styles.input}
+            style={lightInput}
           />
         </label>
         <div style={styles.dayCounter}>
           {elapsed === null ? "Asigna la fecha de inicio para empezar a contar días" : (<>Día <strong>{elapsed}</strong> de {diasRef}</>)}
         </div>
         <div style={styles.dayCounter}>
-          {esMayor1mw ? "Avance" : "Avance ponderado por costo"}: <strong style={{ color: "#F5B942" }}>{overallPct}%</strong>
+          {esMayor1mw ? "Avance" : "Avance ponderado por costo"}: <strong style={{ color: "#FFFFFF" }}>{overallPct}%</strong>
         </div>
         {esMayor1mw ? (
-          <label style={styles.dateField}>
+          <label style={lightDateField}>
             <span>FPO (manual — trámite ante el CND)</span>
             <input
               type="date"
               value={data.fpoManual || ""}
               onChange={(e) => onChange({ ...data, fpoManual: e.target.value })}
-              style={styles.input}
+              style={lightInput}
             />
           </label>
         ) : (
           <>
-            <div style={styles.dateField}>
+            <div style={lightDateField}>
               <span>FPO (6 meses)</span>
-              <div style={{ ...styles.input, fontWeight: 700, color: "#F5B942" }}>{fpo ? fmtDate(fpo) : "—"}</div>
+              <div style={{ ...lightInput, fontWeight: 700, color: BRAND_DARK }}>{fpo ? fmtDate(fpo) : "—"}</div>
             </div>
-            <div style={styles.dateField}>
+            <div style={lightDateField}>
               <span>FPO con prórroga (9 meses)</span>
-              <div style={{ ...styles.input, fontWeight: 700, color: "#E2604F" }}>{fpoProrroga ? fmtDate(fpoProrroga) : "—"}</div>
+              <div style={{ ...lightInput, fontWeight: 700, color: BRAND_DARK }}>{fpoProrroga ? fmtDate(fpoProrroga) : "—"}</div>
             </div>
           </>
         )}
@@ -1796,25 +1869,25 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
       </div>
 
       {fpoAlerta && (
-        <div style={styles.pagosAlertBox}>
-          <div style={styles.cardHead}><AlertTriangle size={16} color="#E8A33D" /><span>FPO</span></div>
+        <div style={lightAlertBox}>
+          <div style={lightCardHead}><AlertTriangle size={16} color="#E8A33D" /><span>FPO</span></div>
           <ul style={styles.alertList}>
-            <li style={{ ...styles.alertItem, color: fpoAlerta.tipo === "vencido" ? "#E2604F" : "#E8A33D" }}>{fpoAlerta.texto}</li>
+            <li style={{ ...styles.alertItem, color: fpoAlerta.tipo === "vencido" ? "#E2604F" : "#B5790F" }}>{fpoAlerta.texto}</li>
           </ul>
         </div>
       )}
 
       {curvaSData.length > 0 && (
-        <div style={styles.chartBox}>
-          <div style={styles.cardHead}><Zap size={16} color="#F5B942" /><span>Curva S de energización</span></div>
+        <div style={lightChartBox}>
+          <div style={lightCardHead}><Zap size={16} color={BRAND_DARK} /><span>Curva S de energización</span></div>
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={curvaSData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
-              <XAxis dataKey="label" tick={{ fill: "#7A8A93", fontSize: 10 }} />
-              <YAxis domain={[0, 100]} tick={{ fill: "#7A8A93", fontSize: 10 }} unit="%" />
-              <Tooltip contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }} />
+              <CartesianGrid strokeDasharray="3 3" stroke={OVERVIEW_LIGHT.border} />
+              <XAxis dataKey="label" tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} />
+              <YAxis domain={[0, 100]} tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} unit="%" />
+              <Tooltip contentStyle={{ background: "#FFFFFF", border: `1px solid ${OVERVIEW_LIGHT.border}`, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }} />
               <RLegend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="base" name="Línea base" stroke="#4FA8D8" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="base" name="Línea base" stroke={BRAND_DARK} strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="real" name="Avance real" stroke="#F5B942" strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
@@ -1841,7 +1914,7 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
               </div>
               <div style={styles.wbsGroupMeta}>
                 <span style={styles.wbsCost}>peso {groupCost}</span>
-                <span style={{ ...styles.wbsPct, color: groupPct === 100 ? "#5FBF8F" : style.fg }}>
+                <span style={{ ...styles.wbsPct, color: groupPct === 100 ? BRAND_DARK : style.fg }}>
                   {groupPct}%
                 </span>
               </div>
@@ -1860,7 +1933,7 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
                     key={i}
                     style={{
                       ...styles.wbsItemRow,
-                      borderLeftColor: state.done ? "#5FBF8F" : delayed ? "#E2604F" : "#2A3339",
+                      borderLeftColor: state.done ? BRAND_DARK : delayed ? "#E2604F" : OVERVIEW_LIGHT.border,
                     }}
                   >
                     <button
@@ -1869,11 +1942,11 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
                       aria-label={state.done ? "Marcar como pendiente" : "Marcar como completado"}
                     >
                       {state.done ? (
-                        <CheckCircle2 size={17} color="#5FBF8F" />
+                        <CheckCircle2 size={17} color={BRAND_DARK} />
                       ) : delayed ? (
                         <AlertTriangle size={17} color="#E2604F" />
                       ) : (
-                        <Circle size={17} color="#5A6870" />
+                        <Circle size={17} color="#8FA39B" />
                       )}
                     </button>
                     <span style={state.done ? styles.wbsItemTitleDone : styles.wbsItemTitle}>{it.title}</span>
@@ -1884,7 +1957,7 @@ function EnergizacionModule({ data, onChange, projectId, isLector }) {
                         type="date"
                         value={state.fecha || ""}
                         onChange={(e) => updateMilestoneFecha(i, e.target.value)}
-                        style={{ ...styles.miniInput, width: 130 }}
+                        style={{ ...lightMiniInput, width: 130 }}
                         disabled={isLector}
                         title="Fecha real en que se completó este trámite"
                       />
@@ -1972,84 +2045,96 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
     setConfirmDelete(null);
   };
 
+  // Piloto de tema claro extendido a Cronograma — mismo patrón que UPME/Energización: estilos
+  // compartidos (chartBox/cronoTableWrap/ovTh/ovTd/miniInput/pasteBtn/rowDeleteBtn/addRowBtn, usados
+  // también por Presupuesto/Pagos aún oscuros) se sobreescriben localmente aquí, sin tocar `styles`.
+  const lightPasteBtn = { ...styles.pasteBtn, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_BODY };
+  const lightChartBox = { ...styles.chartBox, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightTableWrap = { ...styles.cronoTableWrap, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTh = { ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTd = { ...styles.ovTd, color: OVERVIEW_LIGHT.textPrimary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightMiniInput = { ...styles.miniInput, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightRowDeleteBtn = { ...styles.rowDeleteBtn, color: "#8FA39B" };
+  const lightAddRowBtn = { ...styles.addRowBtn, background: BRAND_DARK, color: "#FFFFFF" };
+
   return (
-    <div>
+    <div style={{ background: OVERVIEW_LIGHT.page, margin: "-26px -32px -60px", padding: "26px 32px 60px", minHeight: "100vh" }}>
       <div style={styles.cronoHead}>
-        <h3 style={styles.h3}>Cronograma de obra</h3>
+        <h3 style={{ ...styles.h3, color: "#FFFFFF", fontFamily: FONT_BRAND_DISPLAY }}>Cronograma de obra</h3>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ ...styles.pesoTotalTag, color: Math.round(pesoTotal) === 100 ? "#5FBF8F" : "#E8A33D" }}>
+          <span style={{ ...styles.pesoTotalTag, color: Math.round(pesoTotal) === 100 ? "#FFFFFF" : "#FFE8B3" }}>
             peso total: {pesoTotal}% {Math.round(pesoTotal) !== 100 ? "(debería sumar 100%)" : ""}
           </span>
-          <button style={styles.pasteBtn} onClick={() => setShowPaste(true)}>
+          <button style={lightPasteBtn} onClick={() => setShowPaste(true)}>
             <ClipboardPaste size={14} /> Pegar desde Project/Excel
           </button>
         </div>
       </div>
 
       <div style={styles.cronoHead}>
-        <h3 style={styles.h3}>Curva S de construcción</h3>
+        <h3 style={{ ...styles.h3, color: "#FFFFFF", fontFamily: FONT_BRAND_DISPLAY }}>Curva S de construcción</h3>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={styles.pesoTotalTag}>
+          <span style={{ ...styles.pesoTotalTag, color: "#FFFFFF" }}>
             avance real hoy: {avanceHoy}%{lastReal && lastReal.fecha !== todayISO() ? ` · último registro: ${lastReal.avance}% (${fmtDate(lastReal.fecha)})` : ""}
           </span>
         </div>
       </div>
-      <div style={{ color: "#7A8A93", fontSize: 11.5, margin: "-6px 0 12px" }}>
+      <div style={{ color: "#DCEAE4", fontSize: 11.5, margin: "-6px 0 12px" }}>
         El seguimiento se registra solo: cada vez que editas el %completado de una actividad, el punto de hoy se actualiza automáticamente.
       </div>
 
       {curvaData.length === 0 ? (
-        <div style={{ color: "#7A8A93", fontSize: 13, padding: "10px 0 20px" }}>
+        <div style={{ color: "#DCEAE4", fontSize: 13, padding: "10px 0 20px" }}>
           Agrega actividades con fechas para ver la línea base, y registros de avance real para ver la línea de seguimiento.
         </div>
       ) : (
-        <div style={styles.chartBox}>
+        <div style={lightChartBox}>
           <ResponsiveContainer width="100%" height={320}>
             <LineChart data={curvaData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
-              <XAxis dataKey="label" tick={{ fill: "#7A8A93", fontSize: 10 }} />
-              <YAxis domain={[0, 100]} tick={{ fill: "#7A8A93", fontSize: 10 }} unit="%" />
-              <Tooltip contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }} />
+              <CartesianGrid strokeDasharray="3 3" stroke={OVERVIEW_LIGHT.border} />
+              <XAxis dataKey="label" tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} />
+              <YAxis domain={[0, 100]} tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} unit="%" />
+              <Tooltip contentStyle={{ background: "#FFFFFF", border: `1px solid ${OVERVIEW_LIGHT.border}`, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }} />
               <RLegend wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="base" name="Línea base" stroke="#4FA8D8" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="base" name="Línea base" stroke={BRAND_DARK} strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="real" name="Seguimiento real" stroke="#F5B942" strokeWidth={2} dot={{ r: 3 }} connectNulls />
             </LineChart>
           </ResponsiveContainer>
         </div>
       )}
 
-      <div style={styles.cronoTableWrap}>
+      <div style={lightTableWrap}>
         <table style={styles.overviewTable}>
           <thead>
             <tr>
-              <th style={styles.ovTh}>Fecha de corte</th>
-              <th style={styles.ovTh}>Avance real acumulado</th>
-              <th style={styles.ovTh}></th>
+              <th style={lightOvTh}>Fecha de corte</th>
+              <th style={lightOvTh}>Avance real acumulado</th>
+              <th style={lightOvTh}></th>
             </tr>
           </thead>
           <tbody>
             {[...data.seguimiento].sort((a, b) => a.fecha.localeCompare(b.fecha)).map((s) => (
               <tr key={s.id}>
-                <td style={styles.ovTd}>
-                  <input type="date" style={styles.miniInput} value={s.fecha} onChange={(e) => updateSeg(s.id, { fecha: e.target.value })} />
+                <td style={lightOvTd}>
+                  <input type="date" style={lightMiniInput} value={s.fecha} onChange={(e) => updateSeg(s.id, { fecha: e.target.value })} />
                 </td>
-                <td style={styles.ovTd}>
-                  <input type="number" style={{ ...styles.miniInput, width: 70 }} value={s.avance} onChange={(e) => updateSeg(s.id, { avance: e.target.value })} />
+                <td style={lightOvTd}>
+                  <input type="number" style={{ ...lightMiniInput, width: 70 }} value={s.avance} onChange={(e) => updateSeg(s.id, { avance: e.target.value })} />
                 </td>
-                <td style={styles.ovTd}>
-                  <button style={styles.rowDeleteBtn} onClick={() => askDeleteSeg(s)}><Trash2 size={13} /></button>
+                <td style={lightOvTd}>
+                  <button style={lightRowDeleteBtn} onClick={() => askDeleteSeg(s)}><Trash2 size={13} /></button>
                 </td>
               </tr>
             ))}
             <tr>
-              <td style={styles.ovTd}>
-                <input type="date" style={styles.miniInput} value={newSeg.fecha} onChange={(e) => setNewSeg({ ...newSeg, fecha: e.target.value })} />
+              <td style={lightOvTd}>
+                <input type="date" style={lightMiniInput} value={newSeg.fecha} onChange={(e) => setNewSeg({ ...newSeg, fecha: e.target.value })} />
               </td>
-              <td style={styles.ovTd}>
-                <input type="number" style={{ ...styles.miniInput, width: 70 }} placeholder="%" value={newSeg.avance} onChange={(e) => setNewSeg({ ...newSeg, avance: e.target.value })} />
+              <td style={lightOvTd}>
+                <input type="number" style={{ ...lightMiniInput, width: 70 }} placeholder="%" value={newSeg.avance} onChange={(e) => setNewSeg({ ...newSeg, avance: e.target.value })} />
               </td>
-              <td style={styles.ovTd}>
-                <button style={styles.addRowBtn} onClick={addSeg}><Plus size={14} /></button>
+              <td style={lightOvTd}>
+                <button style={lightAddRowBtn} onClick={addSeg}><Plus size={14} /></button>
               </td>
             </tr>
           </tbody>
@@ -2067,60 +2152,60 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
         />
       )}
 
-      <div style={styles.cronoTableWrap}>
+      <div style={lightTableWrap}>
         <table style={styles.overviewTable}>
           <thead>
             <tr>
-              <th style={styles.ovTh}>Id</th>
-              <th style={styles.ovTh}>Actividad</th>
-              <th style={styles.ovTh}>Duración</th>
-              <th style={styles.ovTh}>Inicio</th>
-              <th style={styles.ovTh}>Fin</th>
-              <th style={styles.ovTh}>Predecesoras</th>
-              <th style={styles.ovTh}>% Compl.</th>
-              <th style={styles.ovTh}>Peso %</th>
-              <th style={styles.ovTh}>Grupo</th>
-              <th style={styles.ovTh}></th>
+              <th style={lightOvTh}>Id</th>
+              <th style={lightOvTh}>Actividad</th>
+              <th style={lightOvTh}>Duración</th>
+              <th style={lightOvTh}>Inicio</th>
+              <th style={lightOvTh}>Fin</th>
+              <th style={lightOvTh}>Predecesoras</th>
+              <th style={lightOvTh}>% Compl.</th>
+              <th style={lightOvTh}>Peso %</th>
+              <th style={lightOvTh}>Grupo</th>
+              <th style={lightOvTh}></th>
             </tr>
           </thead>
           <tbody>
             {data.tasks.map((t) => (
-              <tr key={t.id} style={t.esGrupo ? { background: "#1C242A" } : undefined}>
-                <td style={styles.ovTd}>
-                  <input style={{ ...styles.miniInput, width: 44 }} value={t.displayId || ""} onChange={(e) => updateTask(t.id, { displayId: e.target.value })} />
+              <tr key={t.id} style={t.esGrupo ? { background: BRAND_LIGHT } : undefined}>
+                <td style={lightOvTd}>
+                  <input style={{ ...lightMiniInput, width: 44 }} value={t.displayId || ""} onChange={(e) => updateTask(t.id, { displayId: e.target.value })} />
                 </td>
-                <td style={styles.ovTd}>
+                <td style={lightOvTd}>
                   <input
-                    style={{ ...styles.miniInput, fontWeight: t.esGrupo ? 700 : 400, color: t.esGrupo ? "#F5B942" : "#E8EDEF" }}
+                    style={{ ...lightMiniInput, fontWeight: t.esGrupo ? 700 : 400, color: t.esGrupo ? BRAND_DARK : OVERVIEW_LIGHT.textPrimary }}
                     value={t.nombre}
                     onChange={(e) => updateTask(t.id, { nombre: e.target.value })}
                   />
                 </td>
-                <td style={styles.ovTd}>
-                  <input style={{ ...styles.miniInput, width: 70 }} value={t.duracionTexto || ""} onChange={(e) => updateTask(t.id, { duracionTexto: e.target.value })} placeholder="0 días" />
+                <td style={lightOvTd}>
+                  <input style={{ ...lightMiniInput, width: 70 }} value={t.duracionTexto || ""} onChange={(e) => updateTask(t.id, { duracionTexto: e.target.value })} placeholder="0 días" />
                 </td>
-                <td style={styles.ovTd}>
+                <td style={lightOvTd}>
                   {isComputed(t) ? (
                     <span style={styles.cronoComputedDate} title="Calculada a partir de la predecesora">{fmtDate(t.fechaInicio)}</span>
                   ) : (
-                    <input type="date" style={styles.miniInput} value={t.fechaInicio} onChange={(e) => updateTask(t.id, { fechaInicio: e.target.value })} />
+                    <input type="date" style={lightMiniInput} value={t.fechaInicio} onChange={(e) => updateTask(t.id, { fechaInicio: e.target.value })} />
                   )}
                 </td>
-                <td style={styles.ovTd}>
+                <td style={lightOvTd}>
                   {isComputed(t) ? (
                     <span style={styles.cronoComputedDate} title="Calculada a partir de la predecesora">{fmtDate(t.fechaFin)}</span>
                   ) : (
-                    <input type="date" style={styles.miniInput} value={t.fechaFin} onChange={(e) => updateTask(t.id, { fechaFin: e.target.value })} />
+                    <input type="date" style={lightMiniInput} value={t.fechaFin} onChange={(e) => updateTask(t.id, { fechaFin: e.target.value })} />
                   )}
                 </td>
-                <td style={styles.ovTd}>
+                <td style={lightOvTd}>
                   {(() => {
                     const sinResolver = predecesorasNoResueltas(t);
                     return (
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                         <input
                           style={{
-                            ...styles.miniInput, width: 70,
+                            ...lightMiniInput, width: 70,
                             ...(sinResolver.length > 0 ? { borderColor: "#E2604F", color: "#E2604F" } : {}),
                           }}
                           value={t.predecesoras || ""}
@@ -2138,50 +2223,50 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
                     );
                   })()}
                 </td>
-                <td style={styles.ovTd}>
-                  <input type="number" style={{ ...styles.miniInput, width: 56 }} value={t.pctCompletado || 0} onChange={(e) => updateTask(t.id, { pctCompletado: e.target.value })} />
+                <td style={lightOvTd}>
+                  <input type="number" style={{ ...lightMiniInput, width: 56 }} value={t.pctCompletado || 0} onChange={(e) => updateTask(t.id, { pctCompletado: e.target.value })} />
                 </td>
-                <td style={styles.ovTd}>
-                  <input type="number" style={{ ...styles.miniInput, width: 60 }} value={t.peso} onChange={(e) => updateTask(t.id, { peso: e.target.value })} />
+                <td style={lightOvTd}>
+                  <input type="number" style={{ ...lightMiniInput, width: 60 }} value={t.peso} onChange={(e) => updateTask(t.id, { peso: e.target.value })} />
                 </td>
-                <td style={styles.ovTd}>
+                <td style={lightOvTd}>
                   <input type="checkbox" checked={!!t.esGrupo} onChange={(e) => updateTask(t.id, { esGrupo: e.target.checked })} />
                 </td>
-                <td style={styles.ovTd}>
+                <td style={lightOvTd}>
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     {projectId && <AttachmentsButton projectId={projectId} modulo="cronograma" entidadId={t.id} readOnly={isLector} />}
-                    <button style={styles.rowDeleteBtn} onClick={() => askDeleteTask(t)}><Trash2 size={13} /></button>
+                    <button style={lightRowDeleteBtn} onClick={() => askDeleteTask(t)}><Trash2 size={13} /></button>
                   </span>
                 </td>
               </tr>
             ))}
             <tr>
-              <td style={styles.ovTd}></td>
-              <td style={styles.ovTd}>
-                <input style={styles.miniInput} placeholder="Nueva actividad" value={newTask.nombre} onChange={(e) => setNewTask({ ...newTask, nombre: e.target.value })} />
+              <td style={lightOvTd}></td>
+              <td style={lightOvTd}>
+                <input style={lightMiniInput} placeholder="Nueva actividad" value={newTask.nombre} onChange={(e) => setNewTask({ ...newTask, nombre: e.target.value })} />
               </td>
-              <td style={styles.ovTd}></td>
-              <td style={styles.ovTd}>
-                <input type="date" style={styles.miniInput} value={newTask.fechaInicio} onChange={(e) => setNewTask({ ...newTask, fechaInicio: e.target.value })} />
+              <td style={lightOvTd}></td>
+              <td style={lightOvTd}>
+                <input type="date" style={lightMiniInput} value={newTask.fechaInicio} onChange={(e) => setNewTask({ ...newTask, fechaInicio: e.target.value })} />
               </td>
-              <td style={styles.ovTd}>
-                <input type="date" style={styles.miniInput} value={newTask.fechaFin} onChange={(e) => setNewTask({ ...newTask, fechaFin: e.target.value })} />
+              <td style={lightOvTd}>
+                <input type="date" style={lightMiniInput} value={newTask.fechaFin} onChange={(e) => setNewTask({ ...newTask, fechaFin: e.target.value })} />
               </td>
-              <td style={styles.ovTd}>
+              <td style={lightOvTd}>
                 <input
-                  style={{ ...styles.miniInput, width: 70 }}
+                  style={{ ...lightMiniInput, width: 70 }}
                   placeholder="ej. 35CC+5 días"
                   value={newTask.predecesoras}
                   onChange={(e) => setNewTask({ ...newTask, predecesoras: e.target.value })}
                 />
               </td>
-              <td style={styles.ovTd}></td>
-              <td style={styles.ovTd}>
-                <input type="number" style={{ ...styles.miniInput, width: 60 }} placeholder="%" value={newTask.peso} onChange={(e) => setNewTask({ ...newTask, peso: e.target.value })} />
+              <td style={lightOvTd}></td>
+              <td style={lightOvTd}>
+                <input type="number" style={{ ...lightMiniInput, width: 60 }} placeholder="%" value={newTask.peso} onChange={(e) => setNewTask({ ...newTask, peso: e.target.value })} />
               </td>
-              <td style={styles.ovTd}></td>
-              <td style={styles.ovTd}>
-                <button style={styles.addRowBtn} onClick={addTask}><Plus size={14} /></button>
+              <td style={lightOvTd}></td>
+              <td style={lightOvTd}>
+                <button style={lightAddRowBtn} onClick={addTask}><Plus size={14} /></button>
               </td>
             </tr>
           </tbody>
@@ -2189,14 +2274,14 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
       </div>
 
       <div style={styles.cronoHead}>
-        <h3 style={styles.h3}>Gantt</h3>
-        <button style={styles.pasteBtn} onClick={() => setShowGantt((v) => !v)}>
+        <h3 style={{ ...styles.h3, color: "#FFFFFF", fontFamily: FONT_BRAND_DISPLAY }}>Gantt</h3>
+        <button style={lightPasteBtn} onClick={() => setShowGantt((v) => !v)}>
           {showGantt ? "Ocultar Gantt" : "Mostrar Gantt"}
         </button>
       </div>
       {showGantt && (
         <>
-          <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8, fontSize: 11.5, color: "#7A8A93" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8, fontSize: 11.5, color: "#DCEAE4" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
               <span style={{ width: 10, height: 10, borderRadius: 2, background: "#4FA8D8", display: "inline-block" }} /> tarea
             </span>
@@ -2428,62 +2513,71 @@ function PresupuestoModule({ data, onChange, pagos, projectName }) {
     baseValoresPorCategoria.set(cat, (baseValoresPorCategoria.get(cat) || 0) + calcPresupuestoItem(it).valorTotal);
   });
 
+  // Piloto de tema claro extendido a Presupuesto — mismo patrón que UPME/Energización/Cronograma.
+  const lightStat = { ...styles.overviewStat, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightStatLabel = { ...styles.overviewStatLabel, color: OVERVIEW_LIGHT.textSecondary };
+  const lightSubTabBtn = { ...styles.presSubTabBtn, background: "none", border: "1px solid #FFFFFF66", color: "#FFFFFF", fontFamily: FONT_BRAND_BODY };
+  // La pestaña activa solo cambia el relleno a blanco — mismo tamaño/borde que las demás.
+  const lightSubTabBtnActive = { background: OVERVIEW_LIGHT.card, borderColor: OVERVIEW_LIGHT.card, color: OVERVIEW_LIGHT.textPrimary, fontWeight: 700 };
+  const lightChartBox = { ...styles.chartBox, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightExportHint = { ...styles.exportHint, color: "#DCEAE4" };
+
   return (
-    <div>
+    <div style={{ background: OVERVIEW_LIGHT.page, margin: "-26px -32px -60px", padding: "26px 32px 60px", minHeight: "100vh" }}>
       <div style={styles.overviewStatRow} className="app-stat-row">
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#4FA8D8" }}>{fmtMoney(totals.base)}</div>
-          <div style={styles.overviewStatLabel}>Presupuesto base</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: BRAND_DARK }}>{fmtMoney(totals.base)}</div>
+          <div style={lightStatLabel}>Presupuesto base</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#F5B942" }}>{fmtMoney(totals.ejecutado)}</div>
-          <div style={styles.overviewStatLabel}>Presupuesto ejecución</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#B5790F" }}>{fmtMoney(totals.ejecutado)}</div>
+          <div style={lightStatLabel}>Presupuesto ejecución</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.diferencia > 0 ? "#E2604F" : "#5FBF8F" }}>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.diferencia > 0 ? "#E2604F" : BRAND_DARK }}>
             {totals.diferencia > 0 ? "+" : ""}{fmtMoney(totals.diferencia)}
           </div>
-          <div style={styles.overviewStatLabel}>Diferencia</div>
+          <div style={lightStatLabel}>Diferencia</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, color: totals.pct > 100 ? "#E2604F" : "#5FBF8F" }}>{totals.pct}%</div>
-          <div style={styles.overviewStatLabel}>% ejecutado vs. base</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, color: totals.pct > 100 ? "#E2604F" : BRAND_DARK }}>{totals.pct}%</div>
+          <div style={lightStatLabel}>% ejecutado vs. base</div>
         </div>
       </div>
 
       {chartData.length > 0 && (
         <>
-          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 4, marginBottom: 0 }}>
             <button
               className="view-toggle"
-              style={{ ...styles.presSubTabBtn, ...(chartMode === "categoria" ? styles.presSubTabBtnActive : {}) }}
+              style={{ ...lightSubTabBtn, ...(chartMode === "categoria" ? lightSubTabBtnActive : {}) }}
               onClick={() => setChartMode("categoria")}
             >
               Por categoría
             </button>
             <button
               className="view-toggle"
-              style={{ ...styles.presSubTabBtn, ...(chartMode === "actividad" ? styles.presSubTabBtnActive : {}) }}
+              style={{ ...lightSubTabBtn, ...(chartMode === "actividad" ? lightSubTabBtnActive : {}) }}
               onClick={() => setChartMode("actividad")}
             >
               Por actividad
             </button>
           </div>
-          <div style={{ ...styles.chartBox, overflowX: chartMode === "actividad" ? "auto" : "hidden" }}>
+          <div style={{ ...lightChartBox, overflowX: chartMode === "actividad" ? "auto" : "hidden" }}>
             <div style={chartMode === "actividad" ? { width: chartWidth } : undefined}>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
-                  <XAxis dataKey="name" tick={false} axisLine={{ stroke: "#232D33" }} tickLine={false} />
-                  <YAxis tick={{ fill: "#7A8A93", fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={OVERVIEW_LIGHT.border} />
+                  <XAxis dataKey="name" tick={false} axisLine={{ stroke: OVERVIEW_LIGHT.border }} tickLine={false} />
+                  <YAxis tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
                   <Tooltip
-                    contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }}
+                    contentStyle={{ background: "#FFFFFF", border: `1px solid ${OVERVIEW_LIGHT.border}`, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }}
                     formatter={(v) => fmtMoney(v)}
                   />
                   <RLegend wrapperStyle={{ fontSize: 12 }} />
                   <Bar
                     dataKey="Base"
-                    fill="#4FA8D8"
+                    fill={BRAND_DARK}
                     radius={[4, 4, 0, 0]}
                     background={({ x, y, width, height, index }) => {
                       const d = chartData[index];
@@ -2505,14 +2599,14 @@ function PresupuestoModule({ data, onChange, pagos, projectName }) {
       <div style={styles.presSubTabs}>
         <button
           className="view-toggle"
-          style={{ ...styles.presSubTabBtn, ...(activeSub === "base" ? styles.presSubTabBtnActive : {}) }}
+          style={{ ...lightSubTabBtn, ...(activeSub === "base" ? lightSubTabBtnActive : {}) }}
           onClick={() => setActiveSub("base")}
         >
           Presupuesto base
         </button>
         <button
           className="view-toggle"
-          style={{ ...styles.presSubTabBtn, ...(activeSub === "ejecucion" ? styles.presSubTabBtnActive : {}) }}
+          style={{ ...lightSubTabBtn, ...(activeSub === "ejecucion" ? lightSubTabBtnActive : {}) }}
           onClick={() => setActiveSub("ejecucion")}
         >
           Presupuesto de ejecución
@@ -2520,8 +2614,8 @@ function PresupuestoModule({ data, onChange, pagos, projectName }) {
       </div>
 
       {activeSub === "ejecucion" && (
-        <p style={styles.exportHint}>
-          Los ítems marcados con <span style={{ color: "#4FA8D8" }}>●</span> ya existen en el presupuesto base
+        <p style={lightExportHint}>
+          Los ítems marcados con <span style={{ color: BRAND_DARK }}>●</span> ya existen en el presupuesto base
           (se crearon ahí). Los demás son adicionales, agregados directamente aquí.
         </p>
       )}
@@ -2578,20 +2672,31 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
     setNewItem({ item: "", categoria: "", descripcion: "", cantidad: "", unidad: "", valorUnitario: "", ivaPct: "" });
   };
 
+  // Piloto de tema claro extendido a Presupuesto (tabla de ítems) — mismo patrón que el resto.
+  const lightPasteBtn = { ...styles.pasteBtn, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_BODY };
+  const lightTableWrap = { ...styles.cronoTableWrap, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTh = { ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTd = { ...styles.ovTd, color: OVERVIEW_LIGHT.textPrimary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightMiniInput = { ...styles.miniInput, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightRowDeleteBtn = { ...styles.rowDeleteBtn, color: "#8FA39B" };
+  const lightAddRowBtn = { ...styles.addRowBtn, background: BRAND_DARK, color: "#FFFFFF" };
+  const lightReadonlyText = { ...styles.presReadonlyText, color: OVERVIEW_LIGHT.textPrimary };
+  const lightExcedidoTag = { ...styles.presExcedidoTag };
+
   return (
     <div>
       <div style={styles.pasteBtnRow}>
         {projectName && (
           <>
-            <button style={styles.pasteBtn} onClick={() => downloadPresupuestoTemplate(items, projectName)}>
+            <button style={lightPasteBtn} onClick={() => downloadPresupuestoTemplate(items, projectName)}>
               <FileDown size={14} /> Descargar plantilla Excel
             </button>
-            <button style={styles.pasteBtn} onClick={() => setShowTemplateUpload(true)}>
+            <button style={lightPasteBtn} onClick={() => setShowTemplateUpload(true)}>
               <FileUp size={14} /> Cargar plantilla Excel
             </button>
           </>
         )}
-        <button style={styles.pasteBtn} onClick={() => setShowPaste(true)}>
+        <button style={lightPasteBtn} onClick={() => setShowPaste(true)}>
           <ClipboardPaste size={14} /> Pegar desde Excel
         </button>
       </div>
@@ -2613,22 +2718,22 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
           }}
         />
       )}
-      <div style={styles.cronoTableWrap}>
+      <div style={lightTableWrap}>
       <table style={styles.overviewTable}>
         <thead>
           <tr>
-            <th style={styles.ovTh}>Ítem</th>
-            <th style={styles.ovTh}>Descripción</th>
-            <th style={styles.ovTh}>Cant.</th>
-            <th style={styles.ovTh}>Unidad</th>
-            <th style={styles.ovTh}>Valor unit. (sin IVA)</th>
-            <th style={styles.ovTh}>IVA %</th>
-            <th style={styles.ovTh}>Valor unit. (con IVA)</th>
-            <th style={styles.ovTh}>Valor total</th>
-            <th style={styles.ovTh}>IVA recuperable</th>
-            <th style={styles.ovTh}>Pagado (real)</th>
-            <th style={styles.ovTh}>Categoría</th>
-            <th style={styles.ovTh}></th>
+            <th style={lightOvTh}>Ítem</th>
+            <th style={lightOvTh}>Descripción</th>
+            <th style={lightOvTh}>Cant.</th>
+            <th style={lightOvTh}>Unidad</th>
+            <th style={lightOvTh}>Valor unit. (sin IVA)</th>
+            <th style={lightOvTh}>IVA %</th>
+            <th style={lightOvTh}>Valor unit. (con IVA)</th>
+            <th style={lightOvTh}>Valor total</th>
+            <th style={lightOvTh}>IVA recuperable</th>
+            <th style={lightOvTh}>Pagado (real)</th>
+            <th style={lightOvTh}>Categoría</th>
+            <th style={lightOvTh}></th>
           </tr>
         </thead>
         <tbody>
@@ -2641,12 +2746,12 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                 <tr>
                   <td colSpan={7} style={styles.presGroupRow}>
                     {group.categoria}
-                    {groupExcedido && <span style={styles.presExcedidoTag}> · supera la base ({fmtMoney(groupTotal - baseGroupTotal)})</span>}
+                    {groupExcedido && <span style={lightExcedidoTag}> · supera la base ({fmtMoney(groupTotal - baseGroupTotal)})</span>}
                   </td>
-                  <td style={{ ...styles.presGroupRow, color: groupExcedido ? "#E2604F" : undefined, fontWeight: groupExcedido ? 800 : undefined }}>
+                  <td style={{ ...styles.presGroupRow, color: groupExcedido ? "#E2604F" : "#1F332C", fontWeight: groupExcedido ? 800 : undefined }}>
                     {fmtMoney(groupTotal)}
                   </td>
-                  <td style={styles.presGroupRow} colSpan={2}></td>
+                  <td style={styles.presGroupRow} colSpan={4}></td>
                 </tr>
                 {group.items.map((it) => {
                   const calc = calcPresupuestoItem(it);
@@ -2655,58 +2760,58 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                   const itemExcedido = isLinked && baseValor !== undefined && calc.valorTotal > baseValor;
                   const editing = editingIds.has(it.id);
                   return (
-                    <tr key={it.id} style={itemExcedido ? { background: "#2A1418" } : undefined}>
-                      <td style={styles.ovTd}>
+                    <tr key={it.id} style={itemExcedido ? { background: "#FBE4E1" } : undefined}>
+                      <td style={lightOvTd}>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          {isLinked && <span title="Viene del presupuesto base" style={{ color: "#4FA8D8" }}>●</span>}
+                          {isLinked && <span title="Viene del presupuesto base" style={{ color: BRAND_DARK }}>●</span>}
                           {editing ? (
-                            <input style={{ ...styles.miniInput, width: 56 }} value={it.item} onChange={(e) => onUpdate(it.id, { item: e.target.value })} />
+                            <input style={{ ...lightMiniInput, width: 56 }} value={it.item} onChange={(e) => onUpdate(it.id, { item: e.target.value })} />
                           ) : (
-                            <span style={styles.presReadonlyText}>{it.item}</span>
+                            <span style={lightReadonlyText}>{it.item}</span>
                           )}
                         </div>
                       </td>
-                      <td style={styles.ovTd}>
+                      <td style={lightOvTd}>
                         {editing ? (
-                          <input style={styles.miniInput} value={it.descripcion} onChange={(e) => onUpdate(it.id, { descripcion: e.target.value })} />
+                          <input style={lightMiniInput} value={it.descripcion} onChange={(e) => onUpdate(it.id, { descripcion: e.target.value })} />
                         ) : (
-                          <span style={styles.presReadonlyText}>{it.descripcion}</span>
+                          <span style={lightReadonlyText}>{it.descripcion}</span>
                         )}
                       </td>
-                      <td style={styles.ovTd}>
+                      <td style={lightOvTd}>
                         {editing ? (
-                          <input type="number" style={{ ...styles.miniInput, width: 64 }} value={it.cantidad} onChange={(e) => onUpdate(it.id, { cantidad: e.target.value })} />
+                          <input type="number" style={{ ...lightMiniInput, width: 64 }} value={it.cantidad} onChange={(e) => onUpdate(it.id, { cantidad: e.target.value })} />
                         ) : (
-                          <span style={styles.presReadonlyText}>{it.cantidad}</span>
+                          <span style={lightReadonlyText}>{it.cantidad}</span>
                         )}
                       </td>
-                      <td style={styles.ovTd}>
+                      <td style={lightOvTd}>
                         {editing ? (
-                          <input style={{ ...styles.miniInput, width: 64 }} value={it.unidad} onChange={(e) => onUpdate(it.id, { unidad: e.target.value })} />
+                          <input style={{ ...lightMiniInput, width: 64 }} value={it.unidad} onChange={(e) => onUpdate(it.id, { unidad: e.target.value })} />
                         ) : (
-                          <span style={styles.presReadonlyText}>{it.unidad}</span>
+                          <span style={lightReadonlyText}>{it.unidad}</span>
                         )}
                       </td>
-                      <td style={styles.ovTd}>
+                      <td style={lightOvTd}>
                         {editing ? (
-                          <MoneyInput style={styles.miniInput} value={it.valorUnitario} onChange={(val) => onUpdate(it.id, { valorUnitario: val })} />
+                          <MoneyInput style={lightMiniInput} value={it.valorUnitario} onChange={(val) => onUpdate(it.id, { valorUnitario: val })} />
                         ) : (
-                          <span style={styles.presReadonlyText}>{fmtMoney(it.valorUnitario)}</span>
+                          <span style={lightReadonlyText}>{fmtMoney(it.valorUnitario)}</span>
                         )}
                       </td>
-                      <td style={styles.ovTd}>
+                      <td style={lightOvTd}>
                         {editing ? (
-                          <input type="number" style={{ ...styles.miniInput, width: 56 }} value={it.ivaPct} onChange={(e) => onUpdate(it.id, { ivaPct: e.target.value })} />
+                          <input type="number" style={{ ...lightMiniInput, width: 56 }} value={it.ivaPct} onChange={(e) => onUpdate(it.id, { ivaPct: e.target.value })} />
                         ) : (
-                          <span style={styles.presReadonlyText}>{Number(it.ivaPct) || 0}%</span>
+                          <span style={lightReadonlyText}>{Number(it.ivaPct) || 0}%</span>
                         )}
                       </td>
-                      <td style={styles.ovTd}>{fmtMoney(calc.valorUnitarioConIva)}</td>
-                      <td style={{ ...styles.ovTd, fontWeight: 700, color: itemExcedido ? "#E2604F" : undefined }}>
+                      <td style={lightOvTd}>{fmtMoney(calc.valorUnitarioConIva)}</td>
+                      <td style={{ ...lightOvTd, fontWeight: 700, color: itemExcedido ? "#E2604F" : OVERVIEW_LIGHT.textPrimary }}>
                         {fmtMoney(calc.valorTotal)}
-                        {itemExcedido && <div style={styles.presExcedidoTag}>+{fmtMoney(calc.valorTotal - baseValor)} vs. base</div>}
+                        {itemExcedido && <div style={lightExcedidoTag}>+{fmtMoney(calc.valorTotal - baseValor)} vs. base</div>}
                       </td>
-                      <td style={styles.ovTd}>
+                      <td style={lightOvTd}>
                         {editing ? (
                           <div style={{ display: "flex", alignItems: "center", gap: 4, opacity: calc.ivaEsRecuperable ? 1 : 0.5 }}>
                             <input
@@ -2716,35 +2821,35 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                               onChange={(e) => onUpdate(it.id, { ivaEsRecuperable: e.target.checked })}
                             />
                             <MoneyInput
-                              style={{ ...styles.miniInput, width: 90 }}
+                              style={{ ...lightMiniInput, width: 90 }}
                               value={calc.ivaRecuperableValor}
                               onChange={(val) => onUpdate(it.id, { ivaRecuperableValor: val, ivaEsRecuperable: true })}
                             />
                           </div>
                         ) : (
-                          <span style={styles.presReadonlyText}>{fmtMoney(calc.ivaRecuperable)}</span>
+                          <span style={lightReadonlyText}>{fmtMoney(calc.ivaRecuperable)}</span>
                         )}
                       </td>
-                      <td style={{ ...styles.ovTd, color: pagadoPorItem?.get(it.id) ? "#7FD08A" : "#7A8A93" }}>
+                      <td style={{ ...lightOvTd, color: pagadoPorItem?.get(it.id) ? BRAND_DARK : OVERVIEW_LIGHT.textSecondary }}>
                         {fmtMoney(pagadoPorItem?.get(it.id) || 0)}
                       </td>
-                      <td style={styles.ovTd}>
+                      <td style={lightOvTd}>
                         {editing && (
-                          <input style={styles.miniInput} value={it.categoria} onChange={(e) => onUpdate(it.id, { categoria: e.target.value })} />
+                          <input style={lightMiniInput} value={it.categoria} onChange={(e) => onUpdate(it.id, { categoria: e.target.value })} />
                         )}
                       </td>
-                      <td style={styles.ovTd}>
+                      <td style={lightOvTd}>
                         <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                           <button
                             type="button"
-                            style={styles.rowDeleteBtn}
+                            style={lightRowDeleteBtn}
                             title={editing ? "Bloquear esta fila" : "Editar esta fila"}
                             onClick={() => toggleEditing(it.id)}
                           >
                             {editing ? <Check size={13} /> : <Pencil size={13} />}
                           </button>
                           <button
-                            style={styles.rowDeleteBtn}
+                            style={lightRowDeleteBtn}
                             onClick={() => setConfirmDeleteItem({ id: it.id, label: it.descripcion || "este ítem" })}
                           >
                             <Trash2 size={13} />
@@ -2758,33 +2863,33 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
             );
           })}
           <tr>
-            <td style={styles.ovTd}>
-              <input style={{ ...styles.miniInput, width: 56 }} placeholder="1.1" value={newItem.item} onChange={(e) => setNewItem({ ...newItem, item: e.target.value })} />
+            <td style={lightOvTd}>
+              <input style={{ ...lightMiniInput, width: 56 }} placeholder="1.1" value={newItem.item} onChange={(e) => setNewItem({ ...newItem, item: e.target.value })} />
             </td>
-            <td style={styles.ovTd}>
-              <input style={styles.miniInput} placeholder="Descripción" value={newItem.descripcion} onChange={(e) => setNewItem({ ...newItem, descripcion: e.target.value })} />
+            <td style={lightOvTd}>
+              <input style={lightMiniInput} placeholder="Descripción" value={newItem.descripcion} onChange={(e) => setNewItem({ ...newItem, descripcion: e.target.value })} />
             </td>
-            <td style={styles.ovTd}>
-              <input type="number" style={{ ...styles.miniInput, width: 64 }} placeholder="0" value={newItem.cantidad} onChange={(e) => setNewItem({ ...newItem, cantidad: e.target.value })} />
+            <td style={lightOvTd}>
+              <input type="number" style={{ ...lightMiniInput, width: 64 }} placeholder="0" value={newItem.cantidad} onChange={(e) => setNewItem({ ...newItem, cantidad: e.target.value })} />
             </td>
-            <td style={styles.ovTd}>
-              <input style={{ ...styles.miniInput, width: 64 }} placeholder="UND" value={newItem.unidad} onChange={(e) => setNewItem({ ...newItem, unidad: e.target.value })} />
+            <td style={lightOvTd}>
+              <input style={{ ...lightMiniInput, width: 64 }} placeholder="UND" value={newItem.unidad} onChange={(e) => setNewItem({ ...newItem, unidad: e.target.value })} />
             </td>
-            <td style={styles.ovTd}>
-              <MoneyInput style={styles.miniInput} placeholder="$" value={newItem.valorUnitario} onChange={(val) => setNewItem({ ...newItem, valorUnitario: val })} />
+            <td style={lightOvTd}>
+              <MoneyInput style={lightMiniInput} placeholder="$" value={newItem.valorUnitario} onChange={(val) => setNewItem({ ...newItem, valorUnitario: val })} />
             </td>
-            <td style={styles.ovTd}>
-              <input type="number" style={{ ...styles.miniInput, width: 56 }} placeholder="%" value={newItem.ivaPct} onChange={(e) => setNewItem({ ...newItem, ivaPct: e.target.value })} />
+            <td style={lightOvTd}>
+              <input type="number" style={{ ...lightMiniInput, width: 56 }} placeholder="%" value={newItem.ivaPct} onChange={(e) => setNewItem({ ...newItem, ivaPct: e.target.value })} />
             </td>
-            <td style={styles.ovTd}></td>
-            <td style={styles.ovTd}></td>
-            <td style={styles.ovTd}></td>
-            <td style={styles.ovTd}></td>
-            <td style={styles.ovTd}>
-              <input style={styles.miniInput} placeholder="Categoría (ej. Equipos principales)" value={newItem.categoria} onChange={(e) => setNewItem({ ...newItem, categoria: e.target.value })} />
+            <td style={lightOvTd}></td>
+            <td style={lightOvTd}></td>
+            <td style={lightOvTd}></td>
+            <td style={lightOvTd}></td>
+            <td style={lightOvTd}>
+              <input style={lightMiniInput} placeholder="Categoría (ej. Equipos principales)" value={newItem.categoria} onChange={(e) => setNewItem({ ...newItem, categoria: e.target.value })} />
             </td>
-            <td style={styles.ovTd}>
-              <button style={styles.addRowBtn} onClick={addItem}><Plus size={14} /></button>
+            <td style={lightOvTd}>
+              <button style={lightAddRowBtn} onClick={addItem}><Plus size={14} /></button>
             </td>
           </tr>
         </tbody>
@@ -3183,16 +3288,30 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
     });
   };
 
+  // Piloto de tema claro extendido a Pagos — mismo patrón que el resto de pestañas.
+  const lightPasteBtn = { ...styles.pasteBtn, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_BODY };
+  const lightStat = { ...styles.overviewStat, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightStatLabel = { ...styles.overviewStatLabel, color: OVERVIEW_LIGHT.textSecondary };
+  const lightAlertBox = { ...styles.pagosAlertBox, background: OVERVIEW_LIGHT.card, border: "1px solid #E8A33D88" };
+  const lightCardHead = { ...styles.cardHead, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_DISPLAY };
+  const lightTableWrap = { ...styles.cronoTableWrap, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTh = { ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTd = { ...styles.ovTd, color: OVERVIEW_LIGHT.textPrimary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTdName = { ...styles.ovTdName, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightMiniInput = { ...styles.miniInput, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightRowDeleteBtn = { ...styles.rowDeleteBtn, color: "#8FA39B" };
+  const lightAddRowBtn = { ...styles.addRowBtn, background: BRAND_DARK, color: "#FFFFFF" };
+
   return (
-    <div>
+    <div style={{ background: OVERVIEW_LIGHT.page, margin: "-26px -32px -60px", padding: "26px 32px 60px", minHeight: "100vh" }}>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <button style={styles.pasteBtn} onClick={() => downloadPagosTemplate(data, projectName)}>
+        <button style={lightPasteBtn} onClick={() => downloadPagosTemplate(data, projectName)}>
           <FileDown size={14} /> Descargar plantilla Excel
         </button>
-        <button style={styles.pasteBtn} onClick={() => setShowTemplateUpload(true)}>
+        <button style={lightPasteBtn} onClick={() => setShowTemplateUpload(true)}>
           <FileUp size={14} /> Cargar plantilla Excel
         </button>
-        <button style={styles.pasteBtn} onClick={() => setShowRangeExport(true)}>
+        <button style={lightPasteBtn} onClick={() => setShowRangeExport(true)}>
           <FileDown size={14} /> Exportar programados por fecha
         </button>
       </div>
@@ -3209,45 +3328,45 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
       )}
 
       <div style={styles.overviewStatRow} className="app-stat-row">
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18 }}>{fmtMoney(totals.totalOrdenes)}</div>
-          <div style={styles.overviewStatLabel}>Total en órdenes de servicio</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: OVERVIEW_LIGHT.textPrimary }}>{fmtMoney(totals.totalOrdenes)}</div>
+          <div style={lightStatLabel}>Total en órdenes de servicio</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#5FBF8F" }}>{fmtMoney(totals.totalPagado)}</div>
-          <div style={styles.overviewStatLabel}>Total pagado</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: BRAND_DARK }}>{fmtMoney(totals.totalPagado)}</div>
+          <div style={lightStatLabel}>Total pagado</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#7CA8D8" }}>{fmtMoney(totals.totalProgramado)}</div>
-          <div style={styles.overviewStatLabel}>Total programado (pendiente)</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#B5790F" }}>{fmtMoney(totals.totalProgramado)}</div>
+          <div style={lightStatLabel}>Total programado (pendiente)</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.totalSaldo < 0 ? "#E2604F" : totals.totalSaldo > 0 ? "#E8A33D" : "#5FBF8F" }}>{fmtMoney(totals.totalSaldo)}</div>
-          <div style={styles.overviewStatLabel}>Saldo pendiente</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.totalSaldo < 0 ? "#E2604F" : totals.totalSaldo > 0 ? "#B5790F" : BRAND_DARK }}>{fmtMoney(totals.totalSaldo)}</div>
+          <div style={lightStatLabel}>Saldo pendiente</div>
         </div>
       </div>
 
       {alertas.length > 0 && (
-        <div style={styles.pagosAlertBox}>
-          <div style={styles.cardHead}><AlertTriangle size={16} color="#E8A33D" /><span>Pagos programados</span></div>
+        <div style={lightAlertBox}>
+          <div style={lightCardHead}><AlertTriangle size={16} color="#E8A33D" /><span>Pagos programados</span></div>
           <ul style={styles.alertList}>
             {alertas.map((a, i) => (
-              <li key={i} style={{ ...styles.alertItem, color: a.tipo === "vencido" ? "#E2604F" : "#E8A33D" }}>{a.texto}</li>
+              <li key={i} style={{ ...styles.alertItem, color: a.tipo === "vencido" ? "#E2604F" : "#B5790F" }}>{a.texto}</li>
             ))}
           </ul>
         </div>
       )}
 
-      <div style={styles.cronoTableWrap}>
+      <div style={lightTableWrap}>
         <table style={styles.overviewTable}>
           <thead>
             <tr>
-              <th style={styles.ovTh}>Orden de servicio</th>
-              <th style={styles.ovTh}>Concepto / Descripción</th>
-              <th style={styles.ovTh}>Proveedor</th>
-              <th style={styles.ovTh}>Valor total</th>
-              <th style={styles.ovTh}>Pagado / Saldo</th>
-              <th style={styles.ovTh}></th>
+              <th style={lightOvTh}>Orden de servicio</th>
+              <th style={lightOvTh}>Concepto / Descripción</th>
+              <th style={lightOvTh}>Proveedor</th>
+              <th style={lightOvTh}>Valor total</th>
+              <th style={lightOvTh}>Pagado / Saldo</th>
+              <th style={lightOvTh}></th>
             </tr>
           </thead>
           <tbody>
@@ -3261,61 +3380,61 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
               return (
                 <React.Fragment key={o.id}>
                   <tr style={styles.ovRow} onClick={() => setOpenId(isOpen ? null : o.id)}>
-                    <td style={styles.ovTdName} onClick={(e) => e.stopPropagation()}>
+                    <td style={lightOvTdName} onClick={(e) => e.stopPropagation()}>
                       <input
-                        style={{ ...styles.miniInput, fontWeight: 600 }}
+                        style={{ ...lightMiniInput, fontWeight: 600 }}
                         value={o.numero}
                         onChange={(e) => updateOrden(o.id, { numero: e.target.value })}
                       />
                     </td>
-                    <td style={styles.ovTd} onClick={(e) => e.stopPropagation()}>
+                    <td style={lightOvTd} onClick={(e) => e.stopPropagation()}>
                       <input
-                        style={styles.miniInput}
+                        style={lightMiniInput}
                         placeholder="Concepto de la orden"
                         value={o.descripcion || ""}
                         onChange={(e) => updateOrden(o.id, { descripcion: e.target.value })}
                       />
                       {o.presupuestoItemId && presupuestoLabel(o.presupuestoItemId) && (
-                        <div style={{ fontSize: 10.5, color: "#7FD08A", marginTop: 3 }}>
+                        <div style={{ fontSize: 10.5, color: BRAND_DARK, marginTop: 3 }}>
                           → {presupuestoLabel(o.presupuestoItemId)}
                         </div>
                       )}
                     </td>
-                    <td style={styles.ovTd} onClick={(e) => e.stopPropagation()}>
+                    <td style={lightOvTd} onClick={(e) => e.stopPropagation()}>
                       <input
-                        style={styles.miniInput}
+                        style={lightMiniInput}
                         placeholder="Proveedor"
                         value={o.proveedor || ""}
                         onChange={(e) => updateOrden(o.id, { proveedor: e.target.value })}
                       />
                     </td>
-                    <td style={styles.ovTd} onClick={(e) => e.stopPropagation()}>
+                    <td style={lightOvTd} onClick={(e) => e.stopPropagation()}>
                       <MoneyInput
-                        style={styles.miniInput}
+                        style={lightMiniInput}
                         value={o.valorTotal}
                         onChange={(val) => updateOrden(o.id, { valorTotal: val })}
                       />
                     </td>
-                    <td style={styles.ovTd}>
-                      <OvBar pct={Math.min(100, pct)} label={`${pct}%`} color={sobrepasado ? "#E2604F" : saldo === 0 ? "#5FBF8F" : "#F5B942"} />
-                      <div style={{ fontSize: 10.5, color: sobrepasado ? "#E2604F" : "#7A8A93", marginTop: 3, fontFamily: "'JetBrains Mono', monospace", fontWeight: sobrepasado ? 700 : 400 }}>
+                    <td style={lightOvTd}>
+                      <OvBar pct={Math.min(100, pct)} label={`${pct}%`} color={sobrepasado ? "#E2604F" : saldo === 0 ? BRAND_DARK : "#F5B942"} trackColor={OVERVIEW_LIGHT.barTrack} />
+                      <div style={{ fontSize: 10.5, color: sobrepasado ? "#E2604F" : OVERVIEW_LIGHT.textSecondary, marginTop: 3, fontFamily: "'JetBrains Mono', monospace", fontWeight: sobrepasado ? 700 : 400 }}>
                         {fmtMoney(pagado)} pagado{programado > 0 ? ` · ${fmtMoney(programado)} programado` : ""} · {sobrepasado ? "excedido en " : "saldo "}{fmtMoney(Math.abs(saldo))}
                       </div>
                     </td>
-                    <td style={styles.ovTd}>
-                      <button style={styles.rowDeleteBtn} onClick={(e) => { e.stopPropagation(); askDeleteOrden(o); }}>
+                    <td style={lightOvTd}>
+                      <button style={lightRowDeleteBtn} onClick={(e) => { e.stopPropagation(); askDeleteOrden(o); }}>
                         <Trash2 size={13} />
                       </button>
                     </td>
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={6} style={{ ...styles.ovTd, background: "#12181C" }}>
+                      <td colSpan={6} style={{ ...lightOvTd, background: "#EAF3EE" }}>
                         <div style={{ padding: "6px 4px" }}>
-                          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 12, color: "#B9C4CA" }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }}>
                             <span>Ítem de presupuesto (opcional):</span>
                             <select
-                              style={styles.miniInput}
+                              style={lightMiniInput}
                               value={o.presupuestoItemId || ""}
                               onChange={(e) => updateOrden(o.id, { presupuestoItemId: e.target.value || null })}
                             >
@@ -3334,12 +3453,12 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                           <table style={styles.overviewTable}>
                             <thead>
                               <tr>
-                                <th style={styles.ovTh}>Estado</th>
-                                <th style={styles.ovTh}>Fecha</th>
-                                <th style={styles.ovTh}>Valor</th>
-                                <th style={styles.ovTh}>Concepto</th>
-                                <th style={styles.ovTh}>Aprobado</th>
-                                <th style={styles.ovTh}></th>
+                                <th style={lightOvTh}>Estado</th>
+                                <th style={lightOvTh}>Fecha</th>
+                                <th style={lightOvTh}>Valor</th>
+                                <th style={lightOvTh}>Concepto</th>
+                                <th style={lightOvTh}>Aprobado</th>
+                                <th style={lightOvTh}></th>
                               </tr>
                             </thead>
                             <tbody>
@@ -3347,9 +3466,9 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                                 const estado = p.estado || "pagado";
                                 return (
                                   <tr key={p.id}>
-                                    <td style={styles.ovTd}>
+                                    <td style={lightOvTd}>
                                       <select
-                                        style={styles.miniInput}
+                                        style={lightMiniInput}
                                         value={estado}
                                         onChange={(e) => updatePago(o.id, p.id, { estado: e.target.value })}
                                       >
@@ -3357,31 +3476,31 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                                         <option value="programado">Programado</option>
                                       </select>
                                     </td>
-                                    <td style={styles.ovTd}>
+                                    <td style={lightOvTd}>
                                       <input
                                         type="date"
-                                        style={styles.miniInput}
+                                        style={lightMiniInput}
                                         value={p.fecha}
                                         onChange={(e) => updatePago(o.id, p.id, { fecha: e.target.value })}
                                       />
                                     </td>
-                                    <td style={styles.ovTd}>
+                                    <td style={lightOvTd}>
                                       <input
                                         type="number"
-                                        style={styles.miniInput}
+                                        style={lightMiniInput}
                                         value={p.valor}
                                         onChange={(e) => updatePago(o.id, p.id, { valor: Number(e.target.value) || 0 })}
                                       />
                                     </td>
-                                    <td style={styles.ovTd}>
+                                    <td style={lightOvTd}>
                                       <input
-                                        style={styles.miniInput}
+                                        style={lightMiniInput}
                                         placeholder="Concepto"
                                         value={p.concepto || ""}
                                         onChange={(e) => updatePago(o.id, p.id, { concepto: e.target.value })}
                                       />
                                     </td>
-                                    <td style={styles.ovTd}>
+                                    <td style={lightOvTd}>
                                       <input
                                         type="checkbox"
                                         className="approve-toggle"
@@ -3396,36 +3515,36 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                                         }}
                                       />
                                       {p.aprobado && p.aprobadoPor && (
-                                        <div style={{ fontSize: 10, color: "#7A8A93", marginTop: 3 }}>
+                                        <div style={{ fontSize: 10, color: OVERVIEW_LIGHT.textSecondary, marginTop: 3 }}>
                                           Aprobado por {p.aprobadoPor}{p.aprobadoEn ? ` (${fmtDate(p.aprobadoEn)})` : ""}
                                         </div>
                                       )}
                                     </td>
-                                    <td style={styles.ovTd}>
-                                      <button style={styles.rowDeleteBtn} onClick={() => askDeletePago(o.id, p)}><Trash2 size={13} /></button>
+                                    <td style={lightOvTd}>
+                                      <button style={lightRowDeleteBtn} onClick={() => askDeletePago(o.id, p)}><Trash2 size={13} /></button>
                                     </td>
                                   </tr>
                                 );
                               })}
                               <tr>
-                                <td style={styles.ovTd}>
-                                  <select style={styles.miniInput} value={newPago.estado} onChange={(e) => setNewPago({ ...newPago, estado: e.target.value })}>
+                                <td style={lightOvTd}>
+                                  <select style={lightMiniInput} value={newPago.estado} onChange={(e) => setNewPago({ ...newPago, estado: e.target.value })}>
                                     <option value="pagado">Pagado</option>
                                     <option value="programado">Programado</option>
                                   </select>
                                 </td>
-                                <td style={styles.ovTd}>
-                                  <input type="date" style={styles.miniInput} value={newPago.fecha} onChange={(e) => setNewPago({ ...newPago, fecha: e.target.value })} />
+                                <td style={lightOvTd}>
+                                  <input type="date" style={lightMiniInput} value={newPago.fecha} onChange={(e) => setNewPago({ ...newPago, fecha: e.target.value })} />
                                 </td>
-                                <td style={styles.ovTd}>
-                                  <MoneyInput style={styles.miniInput} placeholder="$" value={newPago.valor} onChange={(val) => setNewPago({ ...newPago, valor: val })} />
+                                <td style={lightOvTd}>
+                                  <MoneyInput style={lightMiniInput} placeholder="$" value={newPago.valor} onChange={(val) => setNewPago({ ...newPago, valor: val })} />
                                 </td>
-                                <td style={styles.ovTd}>
-                                  <input style={styles.miniInput} placeholder="Concepto (opcional)" value={newPago.concepto} onChange={(e) => setNewPago({ ...newPago, concepto: e.target.value })} />
+                                <td style={lightOvTd}>
+                                  <input style={lightMiniInput} placeholder="Concepto (opcional)" value={newPago.concepto} onChange={(e) => setNewPago({ ...newPago, concepto: e.target.value })} />
                                 </td>
-                                <td style={styles.ovTd}></td>
-                                <td style={styles.ovTd}>
-                                  <button style={styles.addRowBtn} onClick={() => addPago(o.id)}><Plus size={14} /></button>
+                                <td style={lightOvTd}></td>
+                                <td style={lightOvTd}>
+                                  <button style={lightAddRowBtn} onClick={() => addPago(o.id)}><Plus size={14} /></button>
                                 </td>
                               </tr>
                             </tbody>
@@ -3438,13 +3557,13 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
               );
             })}
             <tr>
-              <td style={styles.ovTd}>
-                <input style={styles.miniInput} placeholder="N.° de orden" value={newOrden.numero} onChange={(e) => setNewOrden({ ...newOrden, numero: e.target.value })} />
+              <td style={lightOvTd}>
+                <input style={lightMiniInput} placeholder="N.° de orden" value={newOrden.numero} onChange={(e) => setNewOrden({ ...newOrden, numero: e.target.value })} />
               </td>
-              <td style={styles.ovTd}>
-                <input style={styles.miniInput} placeholder="Concepto de la orden" value={newOrden.descripcion} onChange={(e) => setNewOrden({ ...newOrden, descripcion: e.target.value })} />
+              <td style={lightOvTd}>
+                <input style={lightMiniInput} placeholder="Concepto de la orden" value={newOrden.descripcion} onChange={(e) => setNewOrden({ ...newOrden, descripcion: e.target.value })} />
                 <select
-                  style={{ ...styles.miniInput, marginTop: 4, fontSize: 11 }}
+                  style={{ ...lightMiniInput, marginTop: 4, fontSize: 11 }}
                   value={newOrden.presupuestoItemId}
                   onChange={(e) => setNewOrden({ ...newOrden, presupuestoItemId: e.target.value })}
                 >
@@ -3460,15 +3579,15 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                   ))}
                 </select>
               </td>
-              <td style={styles.ovTd}>
-                <input style={styles.miniInput} placeholder="Proveedor" value={newOrden.proveedor} onChange={(e) => setNewOrden({ ...newOrden, proveedor: e.target.value })} />
+              <td style={lightOvTd}>
+                <input style={lightMiniInput} placeholder="Proveedor" value={newOrden.proveedor} onChange={(e) => setNewOrden({ ...newOrden, proveedor: e.target.value })} />
               </td>
-              <td style={styles.ovTd}>
-                <MoneyInput style={styles.miniInput} placeholder="$" value={newOrden.valorTotal} onChange={(val) => setNewOrden({ ...newOrden, valorTotal: val })} />
+              <td style={lightOvTd}>
+                <MoneyInput style={lightMiniInput} placeholder="$" value={newOrden.valorTotal} onChange={(val) => setNewOrden({ ...newOrden, valorTotal: val })} />
               </td>
-              <td style={styles.ovTd}></td>
-              <td style={styles.ovTd}>
-                <button style={styles.addRowBtn} onClick={addOrden}><Plus size={14} /></button>
+              <td style={lightOvTd}></td>
+              <td style={lightOvTd}>
+                <button style={lightAddRowBtn} onClick={addOrden}><Plus size={14} /></button>
               </td>
             </tr>
           </tbody>
@@ -3531,48 +3650,64 @@ function BalanceModule({ data, onChange, pagos, presupuesto }) {
 
   const deleteHito = (id) => onChange({ ...data, hitos: data.hitos.filter((h) => h.id !== id) });
 
+  // Piloto de tema claro extendido a Balance financiero. El gráfico "Pagos del cliente vs. pagos de
+  // la empresa" y sus 2 tarjetas de Ingresos/Pagos realizados quedan con sus colores actuales
+  // (verde/rosa) por ahora, en espera del tono exacto del manual de marca para "pagos de la empresa".
+  const lightChartBox = { ...styles.chartBox, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightCardHead = { ...styles.cardHead, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_DISPLAY };
+  const lightStat = { ...styles.overviewStat, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightStatLabel = { ...styles.overviewStatLabel, color: OVERVIEW_LIGHT.textSecondary };
+  const lightInput = { ...styles.miniInput, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightAlertBox = { ...styles.pagosAlertBox, background: OVERVIEW_LIGHT.card, border: "1px solid #E8A33D88" };
+  const lightTableWrap = { ...styles.cronoTableWrap, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTh = { ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTd = { ...styles.ovTd, color: OVERVIEW_LIGHT.textPrimary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightReadonlyText = { ...styles.presReadonlyText, color: OVERVIEW_LIGHT.textSecondary };
+  const lightRowDeleteBtn = { ...styles.rowDeleteBtn, color: "#8FA39B" };
+  const lightAddRowBtn = { ...styles.addRowBtn, background: BRAND_DARK, color: "#FFFFFF" };
+
   return (
-    <div>
-      <div style={styles.chartBox}>
-        <div style={styles.cardHead}><Landmark size={16} color="#A78BFA" /><span>Valor del proyecto</span></div>
+    <div style={{ background: OVERVIEW_LIGHT.page, margin: "-26px -32px -60px", padding: "26px 32px 60px", minHeight: "100vh" }}>
+      <div style={lightChartBox}>
+        <div style={lightCardHead}><Landmark size={16} color={BRAND_DARK} /><span>Valor del proyecto</span></div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0 14px" }}>
-          <span style={{ fontSize: 12, color: "#7A8A93" }}>Valor de venta al cliente (contrato):</span>
+          <span style={{ fontSize: 12, color: OVERVIEW_LIGHT.textSecondary }}>Valor de venta al cliente (contrato):</span>
           <MoneyInput
-            style={{ ...styles.miniInput, width: 160 }}
+            style={{ ...lightInput, width: 160 }}
             value={data.valorVentaCliente}
             onChange={(val) => onChange({ ...data, valorVentaCliente: val })}
           />
         </div>
         <div style={styles.overviewStatRow} className="app-stat-row">
-          <div style={styles.overviewStat}>
-            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#A78BFA" }}>{fmtMoney(margen.valorVenta)}</div>
-            <div style={styles.overviewStatLabel}>Valor de venta (cliente)</div>
+          <div style={lightStat}>
+            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: BRAND_DARK }}>{fmtMoney(margen.valorVenta)}</div>
+            <div style={lightStatLabel}>Valor de venta (cliente)</div>
           </div>
-          <div style={styles.overviewStat}>
-            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#7A8A93" }}>{fmtMoney(margen.presupuestoBase)}</div>
-            <div style={styles.overviewStatLabel}>Valor base (presupuesto base)</div>
+          <div style={lightStat}>
+            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: OVERVIEW_LIGHT.textSecondary }}>{fmtMoney(margen.presupuestoBase)}</div>
+            <div style={lightStatLabel}>Valor base (presupuesto base)</div>
           </div>
-          <div style={styles.overviewStat}>
-            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#7FD08A" }}>{fmtMoney(margen.presupuestoEjecucion)}</div>
-            <div style={styles.overviewStatLabel}>Valor del proyecto (ejecución)</div>
+          <div style={lightStat}>
+            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: BRAND_DARK }}>{fmtMoney(margen.presupuestoEjecucion)}</div>
+            <div style={lightStatLabel}>Valor del proyecto (ejecución)</div>
           </div>
-          <div style={styles.overviewStat}>
-            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: margen.utilidadReal >= 0 ? "#5FBF8F" : "#E2604F" }}>{fmtMoney(margen.utilidadReal)}</div>
-            <div style={styles.overviewStatLabel}>Utilidad real (venta − ejecución)</div>
+          <div style={lightStat}>
+            <div style={{ ...styles.overviewStatNum, fontSize: 18, color: margen.utilidadReal >= 0 ? BRAND_DARK : "#E2604F" }}>{fmtMoney(margen.utilidadReal)}</div>
+            <div style={lightStatLabel}>Utilidad real (venta − ejecución)</div>
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "16px 4px 8px" }}>
           {[
-            { label: "Valor de venta (meta)", value: margen.valorVenta, color: "#A78BFA" },
-            { label: "Presupuesto base (plan)", value: margen.presupuestoBase, color: "#C7D1D6" },
-            { label: "Presupuesto ejecución (real)", value: margen.presupuestoEjecucion, color: ejecucionSobreVenta ? "#E2604F" : "#7FD08A" },
+            { label: "Valor de venta (meta)", value: margen.valorVenta, color: BRAND_DARK },
+            { label: "Presupuesto base (plan)", value: margen.presupuestoBase, color: BRAND_LIGHT },
+            { label: "Presupuesto ejecución (real)", value: margen.presupuestoEjecucion, color: ejecucionSobreVenta ? "#E2604F" : BRAND_DARK },
           ].map((row) => (
             <div key={row.label}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "#7A8A93", marginBottom: 4 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: OVERVIEW_LIGHT.textSecondary, marginBottom: 4 }}>
                 <span>{row.label}</span>
-                <span style={{ fontFamily: FONT_MONO, color: "#E8EDEF" }}>{fmtMoney(row.value)}</span>
+                <span style={{ fontFamily: FONT_MONO, color: OVERVIEW_LIGHT.textPrimary }}>{fmtMoney(row.value)}</span>
               </div>
-              <div style={{ height: 16, background: "#1C242A", borderRadius: 5 }}>
+              <div style={{ height: 16, background: "#E3E9E6", borderRadius: 5 }}>
                 <div style={{ height: "100%", width: `${margenPct(row.value)}%`, background: row.color, borderRadius: 5, transition: "width 0.2s" }} />
               </div>
             </div>
@@ -3586,28 +3721,28 @@ function BalanceModule({ data, onChange, pagos, presupuesto }) {
       </div>
 
       <div style={styles.overviewStatRow} className="app-stat-row">
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#5FBF8F" }}>{fmtMoney(totals.totalIngresos)}</div>
-          <div style={styles.overviewStatLabel}>Ingresos (consignado por el cliente)</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: BRAND_DARK }}>{fmtMoney(totals.totalIngresos)}</div>
+          <div style={lightStatLabel}>Ingresos (consignado por el cliente)</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#E77DA8" }}>{fmtMoney(totals.totalPagos)}</div>
-          <div style={styles.overviewStatLabel}>Pagos realizados a proveedores</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#B5790F" }}>{fmtMoney(totals.totalPagos)}</div>
+          <div style={lightStatLabel}>Pagos realizados a proveedores</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.saldo >= 0 ? "#5FBF8F" : "#E2604F" }}>{fmtMoney(totals.saldo)}</div>
-          <div style={styles.overviewStatLabel}>Queda</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: totals.saldo >= 0 ? BRAND_DARK : "#E2604F" }}>{fmtMoney(totals.saldo)}</div>
+          <div style={lightStatLabel}>Queda</div>
         </div>
-        <div style={styles.overviewStat}>
-          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: "#7A8A93" }}>{fmtMoney(totals.totalEsperado)}</div>
-          <div style={styles.overviewStatLabel}>Total esperado (todos los hitos)</div>
+        <div style={lightStat}>
+          <div style={{ ...styles.overviewStatNum, fontSize: 18, color: OVERVIEW_LIGHT.textSecondary }}>{fmtMoney(totals.totalEsperado)}</div>
+          <div style={lightStatLabel}>Total esperado (todos los hitos)</div>
         </div>
       </div>
 
-      <div style={styles.chartBox}>
-        <div style={styles.cardHead}><Wallet size={16} color="#4FA8D8" /><span>Pagos del cliente vs. pagos de la empresa (acumulado)</span></div>
+      <div style={lightChartBox}>
+        <div style={lightCardHead}><Wallet size={16} color={BRAND_DARK} /><span>Pagos del cliente vs. pagos de la empresa (acumulado)</span></div>
         {flujoData.length === 0 ? (
-          <div style={{ color: "#7A8A93", fontSize: 13, padding: "10px 0 4px" }}>
+          <div style={{ color: OVERVIEW_LIGHT.textSecondary, fontSize: 13, padding: "10px 0 4px" }}>
             Marca hitos como pagados y registra pagos a proveedores para ver esta gráfica.
           </div>
         ) : (
@@ -3615,101 +3750,101 @@ function BalanceModule({ data, onChange, pagos, presupuesto }) {
             <AreaChart data={flujoData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
               <defs>
                 <linearGradient id="balFlujoIngresos" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#5FBF8F" stopOpacity={0.5} />
-                  <stop offset="100%" stopColor="#5FBF8F" stopOpacity={0.05} />
+                  <stop offset="0%" stopColor={BRAND_DARK} stopOpacity={0.5} />
+                  <stop offset="100%" stopColor={BRAND_DARK} stopOpacity={0.05} />
                 </linearGradient>
                 <linearGradient id="balFlujoPagos" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#E77DA8" stopOpacity={0.5} />
-                  <stop offset="100%" stopColor="#E77DA8" stopOpacity={0.05} />
+                  <stop offset="0%" stopColor="#F5B942" stopOpacity={0.5} />
+                  <stop offset="100%" stopColor="#F5B942" stopOpacity={0.05} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#232D33" />
-              <XAxis dataKey="label" tick={{ fill: "#7A8A93", fontSize: 10 }} />
-              <YAxis tick={{ fill: "#7A8A93", fontSize: 10 }} tickFormatter={(v) => fmtMoney(v)} width={90} />
-              <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ background: "#171E23", border: "1px solid #2A3339", fontSize: 12, color: "#E8EDEF" }} />
+              <CartesianGrid strokeDasharray="3 3" stroke={OVERVIEW_LIGHT.border} />
+              <XAxis dataKey="label" tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} />
+              <YAxis tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} tickFormatter={(v) => fmtMoney(v)} width={90} />
+              <Tooltip formatter={(v) => fmtMoney(v)} contentStyle={{ background: "#FFFFFF", border: `1px solid ${OVERVIEW_LIGHT.border}`, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }} />
               <RLegend wrapperStyle={{ fontSize: 12 }} />
-              <Area type="monotone" dataKey="ingresos" name="Pagos del cliente" stroke="#5FBF8F" strokeWidth={2} fill="url(#balFlujoIngresos)" />
-              <Area type="monotone" dataKey="pagos" name="Pagos de la empresa" stroke="#E77DA8" strokeWidth={2} fill="url(#balFlujoPagos)" />
+              <Area type="monotone" dataKey="ingresos" name="Pagos del cliente" stroke={BRAND_DARK} strokeWidth={2} fill="url(#balFlujoIngresos)" />
+              <Area type="monotone" dataKey="pagos" name="Pagos de la empresa" stroke="#F5B942" strokeWidth={2} fill="url(#balFlujoPagos)" />
             </AreaChart>
           </ResponsiveContainer>
         )}
       </div>
 
       {alertas.length > 0 && (
-        <div style={styles.pagosAlertBox}>
-          <div style={styles.cardHead}><AlertTriangle size={16} color="#E8A33D" /><span>Hitos de pago del cliente</span></div>
+        <div style={lightAlertBox}>
+          <div style={lightCardHead}><AlertTriangle size={16} color="#E8A33D" /><span>Hitos de pago del cliente</span></div>
           <ul style={styles.alertList}>
             {alertas.map((a, i) => (
-              <li key={i} style={{ ...styles.alertItem, color: a.tipo === "vencido" ? "#E2604F" : "#E8A33D" }}>{a.texto}</li>
+              <li key={i} style={{ ...styles.alertItem, color: a.tipo === "vencido" ? "#E2604F" : "#B5790F" }}>{a.texto}</li>
             ))}
           </ul>
         </div>
       )}
 
-      <div style={styles.cronoTableWrap}>
+      <div style={lightTableWrap}>
         <table style={styles.overviewTable}>
           <thead>
             <tr>
-              <th style={styles.ovTh}>Hito de pago</th>
-              <th style={styles.ovTh}>Fecha programada</th>
-              <th style={styles.ovTh}>Valor esperado</th>
-              <th style={styles.ovTh}>¿Pagado?</th>
-              <th style={styles.ovTh}>Fecha de pago</th>
-              <th style={styles.ovTh}>Valor pagado</th>
-              <th style={styles.ovTh}></th>
+              <th style={lightOvTh}>Hito de pago</th>
+              <th style={lightOvTh}>Fecha programada</th>
+              <th style={lightOvTh}>Valor esperado</th>
+              <th style={lightOvTh}>¿Pagado?</th>
+              <th style={lightOvTh}>Fecha de pago</th>
+              <th style={lightOvTh}>Valor pagado</th>
+              <th style={lightOvTh}></th>
             </tr>
           </thead>
           <tbody>
             {data.hitos.map((h) => (
               <tr key={h.id}>
-                <td style={styles.ovTd}>
-                  <input style={styles.miniInput} value={h.nombre} onChange={(e) => updateHito(h.id, { nombre: e.target.value })} />
+                <td style={lightOvTd}>
+                  <input style={lightInput} value={h.nombre} onChange={(e) => updateHito(h.id, { nombre: e.target.value })} />
                 </td>
-                <td style={styles.ovTd}>
-                  <input type="date" style={styles.miniInput} value={h.fechaProgramada || ""} onChange={(e) => updateHito(h.id, { fechaProgramada: e.target.value })} />
+                <td style={lightOvTd}>
+                  <input type="date" style={lightInput} value={h.fechaProgramada || ""} onChange={(e) => updateHito(h.id, { fechaProgramada: e.target.value })} />
                 </td>
-                <td style={styles.ovTd}>
-                  <MoneyInput style={styles.miniInput} value={h.valorEsperado} onChange={(val) => updateHito(h.id, { valorEsperado: val })} />
+                <td style={lightOvTd}>
+                  <MoneyInput style={lightInput} value={h.valorEsperado} onChange={(val) => updateHito(h.id, { valorEsperado: val })} />
                 </td>
-                <td style={styles.ovTd}>
+                <td style={lightOvTd}>
                   <input type="checkbox" checked={!!h.pagado} onChange={(e) => togglePagado(h, e.target.checked)} />
                 </td>
-                <td style={styles.ovTd}>
+                <td style={lightOvTd}>
                   {h.pagado ? (
-                    <input type="date" style={styles.miniInput} value={h.fechaPago || ""} onChange={(e) => updateHito(h.id, { fechaPago: e.target.value })} />
+                    <input type="date" style={lightInput} value={h.fechaPago || ""} onChange={(e) => updateHito(h.id, { fechaPago: e.target.value })} />
                   ) : (
-                    <span style={styles.presReadonlyText}>—</span>
+                    <span style={lightReadonlyText}>—</span>
                   )}
                 </td>
-                <td style={styles.ovTd}>
+                <td style={lightOvTd}>
                   {h.pagado ? (
-                    <MoneyInput style={styles.miniInput} value={h.valorPagado} onChange={(val) => updateHito(h.id, { valorPagado: val })} />
+                    <MoneyInput style={lightInput} value={h.valorPagado} onChange={(val) => updateHito(h.id, { valorPagado: val })} />
                   ) : (
-                    <span style={styles.presReadonlyText}>—</span>
+                    <span style={lightReadonlyText}>—</span>
                   )}
                 </td>
-                <td style={styles.ovTd}>
-                  <button style={styles.rowDeleteBtn} onClick={() => setConfirmDelete({ id: h.id, label: h.nombre || "este hito" })}>
+                <td style={lightOvTd}>
+                  <button style={lightRowDeleteBtn} onClick={() => setConfirmDelete({ id: h.id, label: h.nombre || "este hito" })}>
                     <Trash2 size={13} />
                   </button>
                 </td>
               </tr>
             ))}
             <tr>
-              <td style={styles.ovTd}>
-                <input style={styles.miniInput} placeholder="Ej. Anticipo, Entrega 1..." value={newHito.nombre} onChange={(e) => setNewHito({ ...newHito, nombre: e.target.value })} />
+              <td style={lightOvTd}>
+                <input style={lightInput} placeholder="Ej. Anticipo, Entrega 1..." value={newHito.nombre} onChange={(e) => setNewHito({ ...newHito, nombre: e.target.value })} />
               </td>
-              <td style={styles.ovTd}>
-                <input type="date" style={styles.miniInput} value={newHito.fechaProgramada} onChange={(e) => setNewHito({ ...newHito, fechaProgramada: e.target.value })} />
+              <td style={lightOvTd}>
+                <input type="date" style={lightInput} value={newHito.fechaProgramada} onChange={(e) => setNewHito({ ...newHito, fechaProgramada: e.target.value })} />
               </td>
-              <td style={styles.ovTd}>
-                <MoneyInput style={styles.miniInput} placeholder="$" value={newHito.valorEsperado} onChange={(val) => setNewHito({ ...newHito, valorEsperado: val })} />
+              <td style={lightOvTd}>
+                <MoneyInput style={lightInput} placeholder="$" value={newHito.valorEsperado} onChange={(val) => setNewHito({ ...newHito, valorEsperado: val })} />
               </td>
-              <td style={styles.ovTd}></td>
-              <td style={styles.ovTd}></td>
-              <td style={styles.ovTd}></td>
-              <td style={styles.ovTd}>
-                <button style={styles.addRowBtn} onClick={addHito}><Plus size={14} /></button>
+              <td style={lightOvTd}></td>
+              <td style={lightOvTd}></td>
+              <td style={lightOvTd}></td>
+              <td style={lightOvTd}>
+                <button style={lightAddRowBtn} onClick={addHito}><Plus size={14} /></button>
               </td>
             </tr>
           </tbody>
@@ -5524,7 +5659,7 @@ const styles = {
   sidebar: {
     width: 260,
     minWidth: 260,
-    background: "#12181C",
+    background: BRAND_DARK,
     borderRight: "1px solid #232D33",
     padding: "18px 14px",
     display: "flex",
@@ -5537,65 +5672,71 @@ const styles = {
   },
   brand: { display: "flex", alignItems: "center", gap: 10, padding: "4px 4px 8px" },
   brandLogo: { width: 34, height: 34, borderRadius: 8, objectFit: "cover", flexShrink: 0 },
-  brandTitle: { fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 15, letterSpacing: 0.2 },
-  brandSub: { fontSize: 11, color: "#7A8A93", marginTop: 1 },
+  brandTitle: { fontFamily: FONT_BRAND_DISPLAY, fontWeight: 600, fontSize: 15, letterSpacing: 0.2 },
+  brandSub: { fontSize: 11, color: "#7A8A93", marginTop: 1, fontFamily: FONT_BRAND_BODY },
+  // "GUMAR" / "PROYECTOS" apiladas en 2 líneas, siguiendo la retícula de construcción del
+  // logotipo del manual de marca (interletrado apretado, segunda línea con leve sangría).
+  brandWordmark: { lineHeight: 1.05, marginTop: 3 },
+  brandWordmarkLine: { fontFamily: FONT_BRAND_DISPLAY, fontWeight: 700, fontSize: 11, letterSpacing: 0.6 },
   addProjectBtn: {
     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-    background: "#F5B942", color: "#161311", border: "none", borderRadius: 8,
+    background: BRAND_LIGHT, color: "#1F332C", border: "none", borderRadius: 8,
     padding: "9px 12px", fontWeight: 600, fontSize: 13, cursor: "pointer",
-    fontFamily: FONT_BODY,
+    fontFamily: FONT_BRAND_BODY,
   },
   projectList: { display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" },
-  noProjects: { color: "#5A6870", fontSize: 12.5, padding: "10px 4px" },
+  noProjects: { color: "#5A6870", fontSize: 12.5, padding: "10px 4px", fontFamily: FONT_BRAND_BODY },
   sidebarFooter: { marginTop: "auto", paddingTop: 14, borderTop: "1px solid #232D33", display: "flex", flexDirection: "column", gap: 8 },
-  sharedNote: { fontSize: 10.5, color: "#7A8A93", lineHeight: 1.4, padding: "0 2px" },
+  sharedNote: { fontSize: 10.5, color: "#7A8A93", lineHeight: 1.4, padding: "0 2px", fontFamily: FONT_BRAND_BODY },
   footerBtnRow: { display: "flex", gap: 6 },
   footerBtn: {
-    flex: 1, background: "#171E23", border: "1px solid #2A3339", color: "#C7D0D4", borderRadius: 8,
-    padding: "8px 6px", fontSize: 11, cursor: "pointer", fontFamily: FONT_BODY,
+    flex: 1, background: BRAND_LIGHT, border: "1px solid #8FBBAC", color: "#1F332C", borderRadius: 8,
+    padding: "8px 6px", fontSize: 11, cursor: "pointer", fontFamily: FONT_BRAND_BODY,
   },
   projectItem: {
-    background: "#171E23", border: "1px solid #232D33", borderRadius: 10,
+    background: OFF_WHITE, border: "1px solid #8FBBAC", borderRadius: 10,
     padding: "10px 12px", cursor: "pointer",
   },
-  projectItemActive: { borderColor: "#F5B942", background: "#1C1A14" },
+  projectItemActive: { borderColor: BRAND_DARK, background: "#D9F5E6" },
   projectItemTop: { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  projectName: { fontSize: 13.5, fontWeight: 600, fontFamily: FONT_DISPLAY },
-  deleteBtn: { background: "none", border: "none", color: "#5A6870", cursor: "pointer", padding: 2 },
-  projectMeta: { fontSize: 11, color: "#7A8A93", marginBottom: 8, fontFamily: FONT_MONO },
+  projectName: { fontSize: 13.5, fontWeight: 600, fontFamily: FONT_BRAND_DISPLAY, color: "#1F332C" },
+  deleteBtn: { background: "none", border: "none", color: "#3E5850", cursor: "pointer", padding: 2 },
+  projectMeta: { fontSize: 11, color: "#3E5850", marginBottom: 8, fontFamily: FONT_MONO },
   miniBarRow: { display: "flex", alignItems: "center", gap: 6, marginTop: 4 },
-  miniBarLabel: { fontSize: 9.5, color: "#7A8A93", width: 62, flexShrink: 0 },
-  miniBarTrack: { flex: 1, height: 4, background: "#232D33", borderRadius: 4, overflow: "hidden" },
+  miniBarLabel: { fontSize: 9.5, color: "#3E5850", width: 62, flexShrink: 0, fontFamily: FONT_BRAND_BODY },
+  miniBarTrack: { flex: 1, height: 4, background: "#E3E9E6", borderRadius: 4, overflow: "hidden" },
   miniBarFill: { height: "100%", borderRadius: 4 },
-  miniBarPct: { fontSize: 9.5, color: "#7A8A93", width: 28, textAlign: "right", fontFamily: FONT_MONO },
+  miniBarPct: { fontSize: 9.5, color: "#1F332C", width: 28, textAlign: "right", fontFamily: FONT_MONO },
 
   main: { flex: 1, display: "flex", flexDirection: "column", minWidth: 0 },
   noPrintWrap: { display: "flex", flex: 1, minWidth: 0 },
   header: {
-    padding: "22px 32px 0", display: "flex", justifyContent: "space-between",
-    alignItems: "flex-end", flexWrap: "wrap", gap: 16, borderBottom: "1px solid #1E282E",
+    padding: "22px 32px 18px", display: "flex", justifyContent: "space-between",
+    alignItems: "flex-end", flexWrap: "wrap", gap: 16, background: BRAND_DARK,
   },
-  h1: { fontFamily: FONT_DISPLAY, fontSize: 24, margin: 0, fontWeight: 600, letterSpacing: 0.2 },
-  headerMeta: { color: "#7A8A93", fontSize: 12.5, marginTop: 4, fontFamily: FONT_MONO },
+  h1: { fontFamily: FONT_BRAND_DISPLAY, fontSize: 24, margin: 0, fontWeight: 600, letterSpacing: 0.2, color: "#FFFFFF" },
+  headerMeta: { color: "#DCEAE4", fontSize: 12.5, marginTop: 4, fontFamily: FONT_MONO },
   headerRight: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 },
   headerActions: { display: "flex", alignItems: "center", gap: 8 },
   saveBtn: {
-    display: "flex", alignItems: "center", gap: 6, background: "none", border: "1px solid #232D33",
-    color: "#7A8A93", padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 11.5,
+    display: "flex", alignItems: "center", gap: 6, background: "none", border: "1px solid #8FBBAC",
+    color: "#FFFFFF", padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 11.5,
     fontFamily: FONT_MONO,
   },
   pdfBtn: {
-    display: "flex", alignItems: "center", gap: 6, background: "#1C242A", border: "1px solid #2A3339",
-    color: "#E8EDEF", padding: "7px 12px", borderRadius: 7, cursor: "pointer", fontSize: 12,
-    fontFamily: FONT_BODY, fontWeight: 500,
+    display: "flex", alignItems: "center", gap: 6, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`,
+    color: OVERVIEW_LIGHT.textPrimary, padding: "7px 12px", borderRadius: 7, cursor: "pointer", fontSize: 12,
+    fontFamily: FONT_BRAND_BODY, fontWeight: 500,
   },
   tabs: { display: "flex", gap: 4, paddingBottom: 14 },
   tabBtn: {
-    display: "flex", alignItems: "center", gap: 6, background: "none", border: "none",
-    color: "#7A8A93", padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13,
-    fontFamily: FONT_BODY, fontWeight: 500,
+    display: "flex", alignItems: "center", gap: 6, background: "none", border: "1px solid #FFFFFF66",
+    color: "#FFFFFF", padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13,
+    fontFamily: FONT_BRAND_BODY, fontWeight: 500,
   },
-  tabBtnActive: { background: "#1C242A", color: "#E8EDEF" },
+  // La pestaña activa solo cambia el relleno a blanco — mismo tamaño/borde/radio que las demás,
+  // para que todas queden simétricas entre sí.
+  tabBtnActive: { background: OVERVIEW_LIGHT.card, border: "1px solid " + OVERVIEW_LIGHT.card, color: OVERVIEW_LIGHT.textPrimary, fontWeight: 700 },
   content: { padding: "26px 32px 60px", overflowY: "auto" },
 
   resumenGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
@@ -5658,17 +5799,17 @@ const styles = {
   pill: { fontSize: 10, border: "1px solid", borderRadius: 20, padding: "2px 8px", fontFamily: FONT_MONO },
 
   enerHeadRow: { display: "flex", alignItems: "flex-end", gap: 24, flexWrap: "wrap" },
-  dayCounter: { fontFamily: FONT_MONO, fontSize: 13, color: "#F5B942", paddingBottom: 4 },
+  dayCounter: { fontFamily: FONT_MONO, fontSize: 13, color: "#FFFFFF", paddingBottom: 4 },
   legend: { display: "flex", gap: 12, flexWrap: "wrap", fontSize: 11, marginLeft: "auto", paddingBottom: 6 },
-  legendItem: { fontFamily: FONT_BODY },
-  wbsGroup: { marginTop: 22, background: "#141B20", border: "1px solid #212B31", borderRadius: 12, padding: "16px 18px" },
+  legendItem: { fontFamily: FONT_BRAND_BODY },
+  wbsGroup: { marginTop: 22, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 12, padding: "16px 18px" },
   wbsGroupHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 },
-  wbsGroupTitle: { display: "flex", alignItems: "center", gap: 8, fontFamily: FONT_DISPLAY, fontSize: 13.5, fontWeight: 600, color: "#E8EDEF" },
+  wbsGroupTitle: { display: "flex", alignItems: "center", gap: 8, fontFamily: FONT_BRAND_DISPLAY, fontSize: 13.5, fontWeight: 600, color: OVERVIEW_LIGHT.textPrimary },
   wbsDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
   wbsGroupMeta: { display: "flex", alignItems: "center", gap: 10 },
-  wbsCost: { fontFamily: FONT_MONO, fontSize: 11, color: "#7A8A93" },
+  wbsCost: { fontFamily: FONT_MONO, fontSize: 11, color: OVERVIEW_LIGHT.textSecondary },
   wbsPct: { fontFamily: FONT_MONO, fontSize: 13, fontWeight: 700 },
-  wbsBarTrack: { height: 4, background: "#212B31", borderRadius: 4, overflow: "hidden", marginBottom: 12 },
+  wbsBarTrack: { height: 4, background: "#E3E9E6", borderRadius: 4, overflow: "hidden", marginBottom: 12 },
   wbsBarFill: { height: "100%", borderRadius: 4 },
   wbsItems: { display: "flex", flexDirection: "column", gap: 2 },
   wbsItemRow: {
@@ -5676,12 +5817,12 @@ const styles = {
     borderLeft: "2.5px solid", borderRadius: 4,
   },
   wbsCheck: { background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex" },
-  wbsItemTitle: { flex: 1, fontSize: 12.5, color: "#C7D0D4" },
-  wbsItemTitleDone: { flex: 1, fontSize: 12.5, color: "#5A6870", textDecoration: "line-through" },
-  wbsItemDay: { fontFamily: FONT_MONO, fontSize: 10.5, color: "#7A8A93", width: 52, textAlign: "right" },
-  wbsItemCost: { fontFamily: FONT_MONO, fontSize: 10.5, color: "#7A8A93", width: 26, textAlign: "right" },
+  wbsItemTitle: { flex: 1, fontSize: 12.5, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_BODY },
+  wbsItemTitleDone: { flex: 1, fontSize: 12.5, color: "#8FA39B", textDecoration: "line-through", fontFamily: FONT_BRAND_BODY },
+  wbsItemDay: { fontFamily: FONT_MONO, fontSize: 10.5, color: OVERVIEW_LIGHT.textSecondary, width: 52, textAlign: "right" },
+  wbsItemCost: { fontFamily: FONT_MONO, fontSize: 10.5, color: OVERVIEW_LIGHT.textSecondary, width: 26, textAlign: "right" },
   wbsItemDate: { fontFamily: FONT_MONO, fontSize: 10.5, color: "#5FBF8F", width: 74, textAlign: "right" },
-  wbsItemDatePlaceholder: { fontFamily: FONT_MONO, fontSize: 10.5, color: "#3E4A50", width: 74, textAlign: "right" },
+  wbsItemDatePlaceholder: { fontFamily: FONT_MONO, fontSize: 10.5, color: "#B8C4BF", width: 74, textAlign: "right" },
 
 
   modalOverlay: {
@@ -5724,14 +5865,14 @@ const styles = {
 
   // Sidebar overview nav
   overviewNavBtn: {
-    display: "flex", alignItems: "center", gap: 8, background: "#171E23", border: "1px solid #232D33",
-    color: "#B9C4CA", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, cursor: "pointer",
-    fontFamily: FONT_BODY, fontWeight: 500,
+    display: "flex", alignItems: "center", gap: 8, background: BRAND_LIGHT, border: "1px solid #8FBBAC",
+    color: "#1F332C", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, cursor: "pointer",
+    fontFamily: FONT_BRAND_BODY, fontWeight: 500,
   },
-  overviewNavBtnActive: { borderColor: "#4FA8D8", background: "#12202A", color: "#E8EDEF" },
+  overviewNavBtnActive: { borderColor: BRAND_DARK, background: BRAND_DARK, color: "#FFFFFF" },
   footerBtnFull: {
-    width: "100%", background: "#171E23", border: "1px solid #2A3339", color: "#C7D0D4", borderRadius: 8,
-    padding: "8px 6px", fontSize: 11, cursor: "pointer", fontFamily: FONT_BODY,
+    width: "100%", background: BRAND_LIGHT, border: "1px solid #8FBBAC", color: "#1F332C", borderRadius: 8,
+    padding: "8px 6px", fontSize: 11, cursor: "pointer", fontFamily: FONT_BRAND_BODY,
   },
 
   // Overview / Resumen general screen
@@ -5781,7 +5922,7 @@ const styles = {
   pesoTotalTag: { fontFamily: FONT_MONO, fontSize: 11.5, color: "#7A8A93" },
   cronoTableWrap: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, overflow: "auto", marginBottom: 8 },
   cronoComputedDate: {
-    fontFamily: FONT_MONO, fontSize: 11.5, color: "#7A8A93", padding: "0 6px", display: "inline-block", cursor: "default",
+    fontFamily: FONT_MONO, fontSize: 11.5, color: OVERVIEW_LIGHT.textSecondary, padding: "0 6px", display: "inline-block", cursor: "default",
   },
   miniInput: {
     width: "100%", background: "#1C242A", color: "#E8EDEF", border: "1px solid #2A3339", borderRadius: 6,
@@ -5807,15 +5948,15 @@ const styles = {
   },
 
   // Presupuesto module
-  presSubTabs: { display: "flex", gap: 6, marginBottom: 14 },
+  presSubTabs: { display: "flex", gap: 4, marginBottom: 0 },
   presSubTabBtn: {
     background: "#171E23", border: "1px solid #232D33", color: "#7A8A93", borderRadius: 8,
     padding: "8px 14px", fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 500,
   },
   presSubTabBtnActive: { borderColor: "#F5B942", background: "#1C1A14", color: "#E8EDEF" },
   presGroupRow: {
-    padding: "8px 16px", fontSize: 11.5, fontWeight: 700, color: "#F5B942", background: "#1C242A",
-    borderBottom: "1px solid #232D33", textTransform: "uppercase", letterSpacing: 0.3,
+    padding: "8px 16px", fontSize: 11.5, fontWeight: 700, color: "#1F332C", background: BRAND_LIGHT,
+    borderBottom: `1px solid ${OVERVIEW_LIGHT.border}`, textTransform: "uppercase", letterSpacing: 0.3,
   },
   presExcedidoTag: { color: "#E2604F", fontSize: 10, fontWeight: 700, textTransform: "none", letterSpacing: 0 },
   presReadonlyText: {
@@ -5834,20 +5975,20 @@ const styles = {
 
   // UPME step timeline
   upmeStepList: { display: "flex", flexDirection: "column", gap: 10 },
-  upmeStepCard: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, padding: "14px 16px" },
-  upmeStepCardSkipped: { opacity: 0.55 },
+  upmeStepCard: { background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 12, padding: "14px 16px" },
+  upmeStepCardSkipped: { opacity: 0.7 },
   upmeStepHead: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" },
   upmeStepNum: {
     width: 30, height: 30, borderRadius: "50%", border: "1.5px solid", display: "flex",
     alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, fontFamily: FONT_MONO, flexShrink: 0,
   },
-  upmeStepLabel: { fontSize: 13.5, color: "#E8EDEF", fontWeight: 500 },
-  upmeSkippedTag: { fontSize: 10.5, color: "#5A6870", marginTop: 2 },
-  upmeCheckToggle: { display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "#7A8A93", cursor: "pointer" },
+  upmeStepLabel: { fontSize: 13.5, color: OVERVIEW_LIGHT.textPrimary, fontWeight: 500, fontFamily: FONT_BRAND_BODY },
+  upmeSkippedTag: { fontSize: 10.5, color: "#8FA39B", marginTop: 2, fontFamily: FONT_BRAND_BODY },
+  upmeCheckToggle: { display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: OVERVIEW_LIGHT.textSecondary, cursor: "pointer", fontFamily: FONT_BRAND_BODY },
   upmeStepBody: { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginTop: 12, paddingLeft: 42 },
   upmeDecisionBox: {
-    display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#B9C4CA",
-    background: "#1C242A", border: "1px solid #2A3339", borderRadius: 8, padding: "8px 12px",
+    display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary, fontFamily: FONT_BRAND_BODY,
+    background: BRAND_LIGHT, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 8, padding: "8px 12px",
   },
   pagosAlertBox: {
     background: "#171E23", border: "1px solid #E8A33D55", borderRadius: 12, padding: "14px 18px", marginBottom: 18,
