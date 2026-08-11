@@ -49,7 +49,7 @@ export default function App() {
   if (session === undefined) {
     return (
       <div style={styles.loadingScreen}>
-        <Loader2 className="spin" size={28} color="#F5B942" />
+        <Loader2 className="spin" size={28} color="#FFFFFF" />
       </div>
     );
   }
@@ -431,7 +431,7 @@ function Dashboard({ session }) {
   if (loading) {
     return (
       <div style={styles.loadingScreen}>
-        <Loader2 className="spin" size={28} color="#F5B942" />
+        <Loader2 className="spin" size={28} color="#FFFFFF" />
       </div>
     );
   }
@@ -715,13 +715,17 @@ function Sidebar({ projects, selectedId, view, onOverview, onSelect, onAdd, onDe
 
   return (
     <aside className="app-sidebar" style={styles.sidebar}>
-      <div style={styles.brand}>
+      <button
+        style={styles.brand}
+        onClick={onOverview}
+        title="Ir a Resumen general"
+      >
         <img src={gumarLogo} alt="Gumar Proyectos" style={styles.brandLogo} />
         <div style={styles.brandWordmark}>
           <div style={styles.brandWordmarkLine}>GUMAR</div>
           <div style={styles.brandWordmarkLine}>PROYECTOS</div>
         </div>
-      </div>
+      </button>
 
       <button
         className="sb-nav-btn"
@@ -5697,7 +5701,7 @@ const styles = {
     justifyContent: "center",
     height: "100vh",
     width: "100%",
-    background: "#0F1417",
+    background: BRAND_DARK,
   },
   sidebar: {
     width: 260,
@@ -5713,7 +5717,10 @@ const styles = {
     top: 0,
     overflowY: "auto",
   },
-  brand: { display: "flex", alignItems: "center", gap: 12, padding: "4px 4px 10px" },
+  brand: {
+    display: "flex", alignItems: "center", gap: 12, padding: "4px 4px 10px",
+    background: "none", border: "none", outline: "none", cursor: "pointer", textAlign: "left", width: "100%",
+  },
   brandLogo: { width: 48, height: 48, borderRadius: 10, objectFit: "cover", flexShrink: 0 },
   brandSub: { fontSize: 11, color: "#7A8A93", marginTop: 1, fontFamily: FONT_BRAND_BODY },
   // "GUMAR" / "PROYECTOS" apiladas en 2 líneas, mismo tamaño y alineación para que se vean
