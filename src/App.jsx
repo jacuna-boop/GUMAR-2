@@ -3,7 +3,7 @@ import {
   Plus, X, ChevronRight, ChevronDown, Sun, FileCheck, Zap, MapPin, Calendar,
   AlertTriangle, CheckCircle2, Circle, Trash2, Loader2, FileDown, Save,
   LayoutGrid, Copy, Check, DollarSign, Wallet, Pencil, ClipboardPaste, Clock, Paperclip, FileUp, Users, Link2,
-  Landmark,
+  Landmark, Search,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar, AreaChart, Area } from "recharts";
 import * as XLSX from "xlsx";
@@ -3231,8 +3231,20 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
   const [confirmDelete, setConfirmDelete] = useState(null); // { kind: "orden" | "pago", ordenId, pagoId, label } | null
   const [showTemplateUpload, setShowTemplateUpload] = useState(false);
   const [showRangeExport, setShowRangeExport] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const totals = pagosTotals(data);
   const alertas = pagosProximosAlertas(data);
+
+  // Busca por número de orden, proveedor o concepto/descripción — sin distinguir mayúsculas/acentos.
+  const normalize = (s) => (s || "").toString().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const searchTerm = normalize(searchQuery.trim());
+  const ordenesFiltradas = searchTerm
+    ? data.ordenes.filter((o) =>
+        normalize(o.numero).includes(searchTerm) ||
+        normalize(o.proveedor).includes(searchTerm) ||
+        normalize(o.descripcion).includes(searchTerm)
+      )
+    : data.ordenes;
 
   const addOrden = () => {
     if (!newOrden.numero.trim() || !newOrden.valorTotal) return;
@@ -3357,6 +3369,16 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
         </div>
       )}
 
+      <div style={{ position: "relative", marginBottom: 10, maxWidth: 360 }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: OVERVIEW_LIGHT.textSecondary, pointerEvents: "none" }} />
+        <input
+          style={{ ...lightMiniInput, paddingLeft: 30 }}
+          placeholder="Buscar por proveedor, orden o concepto..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+      </div>
+
       <div style={lightTableWrap}>
         <table style={styles.overviewTable}>
           <thead>
@@ -3370,7 +3392,14 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
             </tr>
           </thead>
           <tbody>
-            {data.ordenes.map((o) => {
+            {ordenesFiltradas.length === 0 && (
+              <tr>
+                <td colSpan={6} style={{ ...lightOvTd, textAlign: "center", color: OVERVIEW_LIGHT.textSecondary }}>
+                  Sin resultados para "{searchQuery}".
+                </td>
+              </tr>
+            )}
+            {ordenesFiltradas.map((o) => {
               const pagado = ordenPagado(o);
               const programado = ordenProgramado(o);
               const saldo = ordenSaldo(o);
