@@ -1095,20 +1095,20 @@ function AttachmentsButton({ projectId, modulo, entidadId, readOnly }) {
       {open && (
         <div style={styles.attachPopover} onClick={(e) => e.stopPropagation()}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: "#E8EDEF" }}>Adjuntos</span>
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: OVERVIEW_LIGHT.textPrimary }}>Adjuntos</span>
             <button type="button" style={styles.iconBtn} onClick={() => setOpen(false)}><X size={13} /></button>
           </div>
           {files === null ? (
-            <div style={{ fontSize: 11, color: "#7A8A93" }}>Cargando…</div>
+            <div style={{ fontSize: 11, color: OVERVIEW_LIGHT.textSecondary }}>Cargando…</div>
           ) : files.length === 0 ? (
-            <div style={{ fontSize: 11, color: "#7A8A93", marginBottom: 6 }}>Sin archivos todavía.</div>
+            <div style={{ fontSize: 11, color: OVERVIEW_LIGHT.textSecondary, marginBottom: 6 }}>Sin archivos todavía.</div>
           ) : (
             <div style={{ maxHeight: 180, overflowY: "auto", marginBottom: 6 }}>
               {files.map((f) => (
                 <div key={f.id} style={styles.attachRow}>
                   <span
                     onClick={() => handleDownload(f)}
-                    style={{ cursor: "pointer", color: "#4FA8D8", display: "flex", alignItems: "center", gap: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    style={{ cursor: "pointer", color: BRAND_DARK, display: "flex", alignItems: "center", gap: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                     title={f.link_url || f.file_name}
                   >
                     {f.link_url ? <Link2 size={11} style={{ flexShrink: 0 }} /> : <Paperclip size={11} style={{ flexShrink: 0 }} />}
@@ -1559,7 +1559,7 @@ const FONT_BRAND_BODY = "'Lato', 'Segoe UI', sans-serif";
 
 function ResumenGeneral({ projects, projectData, onOpenProject }) {
   if (projects.length === 0) {
-    return <div style={{ color: "#7A8A93", padding: 20 }}>Aún no hay proyectos.</div>;
+    return <div style={{ color: "#DCEAE4", padding: 20 }}>Aún no hay proyectos.</div>;
   }
 
   const rows = projects.map((p) => {
@@ -2066,6 +2066,7 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
   const [showPaste, setShowPaste] = useState(false);
   const [showGantt, setShowGantt] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null); // { kind: "task" | "seg", id, label } | null
+  const [searchQuery, setSearchQuery] = useState("");
 
   const pesoTotal = cronogramaPesoTotal(data.tasks);
   const curvaData = buildCurvaSData(data);
@@ -2092,6 +2093,13 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
     if (t.esGrupo) return [];
     return parsePredecesoras(t.predecesoras).filter((p) => !knownDisplayIds.has(p.id)).map((p) => p.id);
   };
+
+  // Busca por Id o nombre de actividad — sin distinguir mayúsculas/acentos.
+  const normalize = (s) => (s || "").toString().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const searchTerm = normalize(searchQuery.trim());
+  const visibleTasks = searchTerm
+    ? data.tasks.filter((t) => normalize(t.displayId).includes(searchTerm) || normalize(t.nombre).includes(searchTerm))
+    : data.tasks;
 
   const addTask = () => {
     if (!newTask.nombre.trim() || !newTask.fechaInicio || !newTask.fechaFin || newTask.peso === "") return;
@@ -2234,6 +2242,16 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
         />
       )}
 
+      <div style={{ position: "relative", marginBottom: 10, maxWidth: 360 }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: OVERVIEW_LIGHT.textSecondary, pointerEvents: "none" }} />
+        <input
+          style={{ ...lightMiniInput, paddingLeft: 30 }}
+          placeholder="Buscar actividad por Id o nombre..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+      </div>
+
       <div style={lightTableWrap}>
         <table style={styles.overviewTable}>
           <thead>
@@ -2251,7 +2269,14 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
             </tr>
           </thead>
           <tbody>
-            {data.tasks.map((t) => (
+            {searchTerm && visibleTasks.length === 0 && (
+              <tr>
+                <td colSpan={10} style={{ ...lightOvTd, textAlign: "center", color: OVERVIEW_LIGHT.textSecondary }}>
+                  Sin resultados para "{searchQuery}".
+                </td>
+              </tr>
+            )}
+            {visibleTasks.map((t) => (
               <tr key={t.id} style={t.esGrupo ? { background: BRAND_LIGHT } : undefined}>
                 <td style={lightOvTd}>
                   <input style={{ ...lightMiniInput, width: 44 }} value={t.displayId || ""} onChange={(e) => updateTask(t.id, { displayId: e.target.value })} />
@@ -2441,16 +2466,16 @@ function PasteCronogramaModal({ existingTasks, onClose, onImport }) {
               {preview.total - preview.grupos} tareas).
               {preview.skipped > 0 && <> Se ignoraron {preview.skipped} filas sin nombre.</>}
               <div style={{ marginTop: 6 }}>
-                <strong style={{ color: "#4FA8D8" }}>{preview.toUpdate.length}</strong> ya existen y se van a actualizar ·{" "}
-                <strong style={{ color: "#5FBF8F" }}>{preview.toAdd.length}</strong> son nuevas.
+                <strong style={{ color: BRAND_DARK }}>{preview.toUpdate.length}</strong> ya existen y se van a actualizar ·{" "}
+                <strong style={{ color: BRAND_DARK }}>{preview.toAdd.length}</strong> son nuevas.
               </div>
               {preview.toUpdate.length > 0 && (
-                <div style={{ marginTop: 8, fontSize: 11.5, color: "#7A8A93" }}>
+                <div style={{ marginTop: 8, fontSize: 11.5, color: OVERVIEW_LIGHT.textSecondary }}>
                   Se actualizarán: {preview.toUpdate.map(({ existing }) => existing.nombre).join(", ")}
                 </div>
               )}
               {preview.toAdd.length > 0 && (
-                <div style={{ marginTop: 4, fontSize: 11.5, color: "#7A8A93" }}>
+                <div style={{ marginTop: 4, fontSize: 11.5, color: OVERVIEW_LIGHT.textSecondary }}>
                   Nuevas: {preview.toAdd.map((t) => t.nombre).join(", ")}
                 </div>
               )}
@@ -2729,6 +2754,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
   const [showPaste, setShowPaste] = useState(false);
   const [showTemplateUpload, setShowTemplateUpload] = useState(false);
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null); // { id, label } | null
+  const [searchQuery, setSearchQuery] = useState("");
   // Filas bloqueadas por defecto (solo texto) para no dañar nada sin querer — hay que darle al
   // lápiz para poder editar valor/cantidad/nombre/categoría de un ítem ya creado.
   const [editingIds, setEditingIds] = useState(new Set());
@@ -2765,6 +2791,12 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
   const lightReadonlyText = { ...styles.presReadonlyText, color: OVERVIEW_LIGHT.textPrimary };
   const lightExcedidoTag = { ...styles.presExcedidoTag };
 
+  // Busca por código de ítem o descripción — sin distinguir mayúsculas/acentos. Los totales de
+  // categoría se calculan siempre sobre TODOS los ítems (no solo los que coinciden), para no
+  // mostrar un "supera la base" engañoso mientras se filtra la vista.
+  const normalize = (s) => (s || "").toString().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const searchTerm = normalize(searchQuery.trim());
+
   return (
     <div>
       <div style={styles.pasteBtnRow}>
@@ -2800,6 +2832,17 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
           }}
         />
       )}
+
+      <div style={{ position: "relative", marginBottom: 10, maxWidth: 360 }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: OVERVIEW_LIGHT.textSecondary, pointerEvents: "none" }} />
+        <input
+          style={{ ...lightMiniInput, paddingLeft: 30 }}
+          placeholder="Buscar ítem por código o descripción..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+      </div>
+
       <div style={lightTableWrap}>
       <table style={styles.overviewTable}>
         <thead>
@@ -2819,10 +2862,21 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
           </tr>
         </thead>
         <tbody>
+          {searchTerm && !grouped.some((g) => g.items.some((it) => normalize(it.item).includes(searchTerm) || normalize(it.descripcion).includes(searchTerm))) && (
+            <tr>
+              <td colSpan={12} style={{ ...lightOvTd, textAlign: "center", color: OVERVIEW_LIGHT.textSecondary }}>
+                Sin resultados para "{searchQuery}".
+              </td>
+            </tr>
+          )}
           {grouped.map((group) => {
             const groupTotal = presupuestoListTotal(group.items);
             const baseGroupTotal = baseValoresPorCategoria?.get(group.categoria);
             const groupExcedido = baseGroupTotal !== undefined && groupTotal > baseGroupTotal;
+            const visibleItems = searchTerm
+              ? group.items.filter((it) => normalize(it.item).includes(searchTerm) || normalize(it.descripcion).includes(searchTerm))
+              : group.items;
+            if (searchTerm && visibleItems.length === 0) return null;
             return (
               <React.Fragment key={group.categoria}>
                 <tr>
@@ -2835,7 +2889,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                   </td>
                   <td style={styles.presGroupRow} colSpan={4}></td>
                 </tr>
-                {group.items.map((it) => {
+                {visibleItems.map((it) => {
                   const calc = calcPresupuestoItem(it);
                   const isLinked = linkedIds && linkedIds.has(it.id);
                   const baseValor = baseValoresPorItem?.get(it.id);
@@ -4251,10 +4305,10 @@ function ProjectFormModal({ onClose, onSave, initial, title, submitLabel, existi
 
         {canClone && cloneSourceId && (
           <div style={{ margin: "4px 0 12px" }}>
-            <div style={{ fontSize: 12, color: "#7A8A93", marginBottom: 6 }}>¿Qué quieres copiar de ese proyecto?</div>
+            <div style={{ fontSize: 12, color: OVERVIEW_LIGHT.textSecondary, marginBottom: 6 }}>¿Qué quieres copiar de ese proyecto?</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               {CLONE_MODULE_OPTIONS.map((m) => (
-                <label key={m.key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: "#E8EDEF" }}>
+                <label key={m.key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, color: OVERVIEW_LIGHT.textPrimary }}>
                   <input
                     type="checkbox"
                     checked={!!cloneModules[m.key]}
@@ -4341,9 +4395,9 @@ function HistoryModal({ project, onClose }) {
         {error ? (
           <div style={{ color: "#E2604F", fontSize: 13 }}>No se pudo cargar el historial. ¿Ya corriste la migración de "project_history" en Supabase?</div>
         ) : rows === null ? (
-          <div style={{ color: "#7A8A93", fontSize: 13 }}>Cargando…</div>
+          <div style={{ color: OVERVIEW_LIGHT.textSecondary, fontSize: 13 }}>Cargando…</div>
         ) : rows.length === 0 ? (
-          <div style={{ color: "#7A8A93", fontSize: 13 }}>Todavía no hay historial registrado para este proyecto.</div>
+          <div style={{ color: OVERVIEW_LIGHT.textSecondary, fontSize: 13 }}>Todavía no hay historial registrado para este proyecto.</div>
         ) : (
           <div style={{ maxHeight: 360, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
             {rows.map((r) => (
@@ -4354,7 +4408,7 @@ function HistoryModal({ project, onClose }) {
                 title="Descargar esta versión como JSON"
               >
                 <span>{fmtDateTime(new Date(r.created_at))}</span>
-                <span style={{ color: "#7A8A93", fontSize: 11.5 }}>{r.updated_by_email || "—"}</span>
+                <span style={{ color: OVERVIEW_LIGHT.textSecondary, fontSize: 11.5 }}>{r.updated_by_email || "—"}</span>
               </button>
             ))}
           </div>
@@ -4423,7 +4477,7 @@ function InformePPI01Modal({ projects, onClose, onExportExcel, onExportPDF }) {
         </p>
         <div style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, margin: "8px 0 14px" }}>
           {projects.map((p) => (
-            <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#E8EDEF" }}>
+            <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: OVERVIEW_LIGHT.textPrimary }}>
               <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
               {p.name}{p.capacity ? ` — ${p.capacity} MWp` : ""}
             </label>
@@ -4518,9 +4572,9 @@ function ProjectMembersModal({ project, onClose }) {
         </p>
         {error && <div style={styles.importError}>{error}</div>}
         {loading ? (
-          <div style={{ padding: "16px 0", color: "#7A8A93", fontSize: 13 }}>Cargando…</div>
+          <div style={{ padding: "16px 0", color: OVERVIEW_LIGHT.textSecondary, fontSize: 13 }}>Cargando…</div>
         ) : profiles.length === 0 ? (
-          <div style={{ padding: "16px 0", color: "#7A8A93", fontSize: 13 }}>No hay usuarios registrados todavía.</div>
+          <div style={{ padding: "16px 0", color: OVERVIEW_LIGHT.textSecondary, fontSize: 13 }}>No hay usuarios registrados todavía.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 320, overflowY: "auto", marginTop: 8 }}>
             {profiles.map((p) => {
@@ -4530,7 +4584,7 @@ function ProjectMembersModal({ project, onClose }) {
                   key={p.id}
                   style={{
                     display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
-                    borderRadius: 8, background: "#1C242A", opacity: busyId === p.id ? 0.6 : 1,
+                    borderRadius: 8, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, opacity: busyId === p.id ? 0.6 : 1,
                   }}
                 >
                   <input
@@ -4540,8 +4594,8 @@ function ProjectMembersModal({ project, onClose }) {
                     onChange={(e) => toggle(p.id, e.target.checked)}
                   />
                   <div style={{ display: "flex", flexDirection: "column" }}>
-                    <span style={{ fontSize: 13, color: "#E8EDEF" }}>{p.full_name || p.email}</span>
-                    <span style={{ fontSize: 11, color: "#7A8A93" }}>
+                    <span style={{ fontSize: 13, color: OVERVIEW_LIGHT.textPrimary }}>{p.full_name || p.email}</span>
+                    <span style={{ fontSize: 11, color: OVERVIEW_LIGHT.textSecondary }}>
                       {p.email}{isProfAdmin ? " · admin (acceso a todo)" : ""}
                     </span>
                   </div>
@@ -4646,16 +4700,16 @@ function CargosModal({ onClose }) {
           </div>
           {error && <div style={styles.importError}>{error}</div>}
           {cargos === null ? (
-            <div style={{ padding: "16px 0", color: "#7A8A93", fontSize: 13 }}>Cargando…</div>
+            <div style={{ padding: "16px 0", color: OVERVIEW_LIGHT.textSecondary, fontSize: 13 }}>Cargando…</div>
           ) : (
             <>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#E8EDEF", margin: "8px 0" }}>Usuarios</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: OVERVIEW_LIGHT.textPrimary, margin: "8px 0" }}>Usuarios</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto", marginBottom: 20 }}>
                 {profiles.map((p) => (
-                  <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: "#1C242A", borderRadius: 8, padding: "8px 10px" }}>
+                  <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 8, padding: "8px 10px" }}>
                     <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                      <span style={{ fontSize: 12.5, color: "#E8EDEF" }}>{p.full_name || p.email}</span>
-                      <span style={{ fontSize: 11, color: "#7A8A93" }}>{p.email}{p.role === "admin" ? " · admin (acceso a todo)" : ""}</span>
+                      <span style={{ fontSize: 12.5, color: OVERVIEW_LIGHT.textPrimary }}>{p.full_name || p.email}</span>
+                      <span style={{ fontSize: 11, color: OVERVIEW_LIGHT.textSecondary }}>{p.email}{p.role === "admin" ? " · admin (acceso a todo)" : ""}</span>
                     </div>
                     <select
                       style={{ ...styles.miniInput, width: 190 }}
@@ -4672,22 +4726,22 @@ function CargosModal({ onClose }) {
                 ))}
               </div>
 
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#E8EDEF", margin: "8px 0" }}>Cargos</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: OVERVIEW_LIGHT.textPrimary, margin: "8px 0" }}>Cargos</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto", marginBottom: 10 }}>
                 {cargos.length === 0 && (
-                  <div style={{ fontSize: 12, color: "#7A8A93" }}>Todavía no hay cargos creados — crea el primero abajo.</div>
+                  <div style={{ fontSize: 12, color: OVERVIEW_LIGHT.textSecondary }}>Todavía no hay cargos creados — crea el primero abajo.</div>
                 )}
                 {cargos.map((c) => {
                   const isOpen = expandedCargoId === c.id;
                   return (
-                    <div key={c.id} style={{ background: "#1C242A", borderRadius: 8, overflow: "hidden" }}>
+                    <div key={c.id} style={{ background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 8, overflow: "hidden" }}>
                       <div
                         style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px 10px 6px", cursor: "pointer" }}
                         onClick={() => setExpandedCargoId(isOpen ? null : c.id)}
                       >
                         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          {isOpen ? <ChevronDown size={15} color="#7A8A93" /> : <ChevronRight size={15} color="#7A8A93" />}
-                          <strong style={{ fontSize: 13, color: "#E8EDEF" }}>{c.nombre}</strong>
+                          {isOpen ? <ChevronDown size={15} color={OVERVIEW_LIGHT.textSecondary} /> : <ChevronRight size={15} color={OVERVIEW_LIGHT.textSecondary} />}
+                          <strong style={{ fontSize: 13, color: OVERVIEW_LIGHT.textPrimary }}>{c.nombre}</strong>
                         </span>
                         <button
                           style={styles.rowDeleteBtn}
@@ -4699,13 +4753,13 @@ function CargosModal({ onClose }) {
                       {isOpen && (
                         <div style={{ padding: "0 12px 12px" }}>
                           {CARGO_PERMISO_GROUPS.map((group, gi) => (
-                            <div key={group.title} style={{ borderTop: gi > 0 ? "1px solid #232D33" : "none", paddingTop: gi > 0 ? 10 : 0, marginTop: gi > 0 ? 10 : 0 }}>
-                              <div style={{ fontSize: 10, color: "#5F6B72", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>{group.title}</div>
+                            <div key={group.title} style={{ borderTop: gi > 0 ? `1px solid ${OVERVIEW_LIGHT.border}` : "none", paddingTop: gi > 0 ? 10 : 0, marginTop: gi > 0 ? 10 : 0 }}>
+                              <div style={{ fontSize: 10, color: OVERVIEW_LIGHT.textSecondary, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>{group.title}</div>
                               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "6px 16px" }}>
                                 {group.keys.map((key) => {
                                   const perm = CARGO_PERMISOS.find((p) => p.key === key);
                                   return (
-                                    <label key={key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#C7D1D6" }}>
+                                    <label key={key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }}>
                                       <input
                                         type="checkbox"
                                         checked={!!c[key]}
@@ -4953,7 +5007,7 @@ function PastePresupuestoModal({ onClose, onImport }) {
 function EmptyState({ onAdd }) {
   return (
     <div style={styles.emptyState}>
-      <Sun size={40} color="#F5B942" />
+      <Sun size={40} color="#FFFFFF" />
       <h2 style={styles.h2}>Aún no tienes proyectos</h2>
       <p style={styles.emptyP}>Crea tu primer parque solar para empezar a llevar el seguimiento de radicación UPME y energización.</p>
       <button style={styles.addProjectBtn} onClick={onAdd}><Plus size={15} /> Nuevo proyecto</button>
@@ -5737,9 +5791,9 @@ const styles = {
   app: {
     display: "flex",
     minHeight: "100vh",
-    background: "#0F1417",
-    color: "#E8EDEF",
-    fontFamily: FONT_BODY,
+    background: BRAND_DARK,
+    color: "#FFFFFF",
+    fontFamily: FONT_BRAND_BODY,
   },
   loadingScreen: {
     display: "flex",
@@ -5782,7 +5836,7 @@ const styles = {
   projectList: { display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" },
   noProjects: { color: "#5A6870", fontSize: 12.5, padding: "10px 4px", fontFamily: FONT_BRAND_BODY },
   sidebarFooter: { marginTop: "auto", paddingTop: 14, borderTop: "1px solid #232D33", display: "flex", flexDirection: "column", gap: 8 },
-  sharedNote: { fontSize: 10.5, color: "#7A8A93", lineHeight: 1.4, padding: "0 2px", fontFamily: FONT_BRAND_BODY },
+  sharedNote: { fontSize: 10.5, color: "#DCEAE4", lineHeight: 1.4, padding: "0 2px", fontFamily: FONT_BRAND_BODY },
   footerBtnRow: { display: "flex", gap: 6 },
   footerBtn: {
     flex: 1, background: BRAND_LIGHT, border: "1px solid #8FBBAC", color: "#1F332C", borderRadius: 8,
@@ -5836,12 +5890,12 @@ const styles = {
   content: { padding: "26px 32px 60px", overflowY: "auto" },
 
   resumenGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 },
-  card: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, padding: 20 },
+  card: { background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 12, padding: 20 },
   cardClickable: { cursor: "pointer", transition: "border-color 120ms, background 120ms" },
-  cardHead: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#B9C4CA", marginBottom: 14, fontWeight: 600 },
-  cardSub: { color: "#7A8A93", fontSize: 12.5, marginTop: 10 },
+  cardHead: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: OVERVIEW_LIGHT.textPrimary, marginBottom: 14, fontWeight: 600, fontFamily: FONT_BRAND_DISPLAY },
+  cardSub: { color: OVERVIEW_LIGHT.textSecondary, fontSize: 12.5, marginTop: 10, fontFamily: FONT_BRAND_BODY },
   bigPctWrap: { display: "flex", alignItems: "center", gap: 14 },
-  bigPctTrack: { flex: 1, height: 8, background: "#232D33", borderRadius: 6, overflow: "hidden" },
+  bigPctTrack: { flex: 1, height: 8, background: "#E3E9E6", borderRadius: 6, overflow: "hidden" },
   bigPctFill: { height: "100%", borderRadius: 6 },
   bigPctNum: { fontFamily: FONT_MONO, fontSize: 20, fontWeight: 700, minWidth: 52, textAlign: "right" },
   alertList: { margin: 0, padding: "0 0 0 18px", display: "flex", flexDirection: "column", gap: 8 },
@@ -5870,8 +5924,8 @@ const styles = {
 
   phaseDetail: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, padding: 22, marginTop: 6 },
   phaseDetailHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
-  h3: { fontFamily: FONT_DISPLAY, fontSize: 16, margin: 0, fontWeight: 600 },
-  h2: { fontFamily: FONT_DISPLAY, fontSize: 19, margin: "14px 0 6px", fontWeight: 600 },
+  h3: { fontFamily: FONT_BRAND_DISPLAY, fontSize: 16, margin: 0, fontWeight: 600, color: OVERVIEW_LIGHT.textPrimary },
+  h2: { fontFamily: FONT_BRAND_DISPLAY, fontSize: 19, margin: "14px 0 6px", fontWeight: 600, color: "#FFFFFF" },
   select: {
     background: "#1C242A", color: "#E8EDEF", border: "1px solid #2A3339", borderRadius: 8,
     padding: "7px 10px", fontSize: 12.5, fontFamily: FONT_BODY,
@@ -5879,10 +5933,10 @@ const styles = {
   dateRow: { display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 18 },
   dateField: { display: "flex", flexDirection: "column", gap: 5, fontSize: 11.5, color: "#7A8A93" },
   input: {
-    background: "#1C242A", color: "#E8EDEF", border: "1px solid #2A3339", borderRadius: 8,
+    background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 8,
     padding: "8px 10px", fontSize: 13, fontFamily: FONT_MONO,
   },
-  staticValue: { fontFamily: FONT_MONO, fontSize: 13, color: "#E8EDEF", padding: "8px 0" },
+  staticValue: { fontFamily: FONT_MONO, fontSize: 13, color: OVERVIEW_LIGHT.textPrimary, padding: "8px 0" },
   checklist: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 },
   checkItem: { display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer" },
   checkText: { fontSize: 13, color: "#C7D0D4" },
@@ -5925,32 +5979,32 @@ const styles = {
     position: "fixed", inset: 0, background: "#00000090", display: "flex",
     alignItems: "center", justifyContent: "center", zIndex: 50,
   },
-  modal: { background: "#171E23", border: "1px solid #2A3339", borderRadius: 14, padding: 24, width: "min(360px, calc(100vw - 32px))" },
+  modal: { background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 14, padding: 24, width: "min(360px, calc(100vw - 32px))" },
   modalHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
-  iconBtn: { background: "none", border: "none", color: "#7A8A93", cursor: "pointer" },
-  modalField: { display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "#7A8A93", marginBottom: 14 },
-  confirmMsg: { fontSize: 13, color: "#C7D0D4", lineHeight: 1.5, margin: "0 0 18px" },
+  iconBtn: { background: "none", border: "none", color: OVERVIEW_LIGHT.textSecondary, cursor: "pointer" },
+  modalField: { display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: OVERVIEW_LIGHT.textSecondary, marginBottom: 14, fontFamily: FONT_BRAND_BODY },
+  confirmMsg: { fontSize: 13, color: OVERVIEW_LIGHT.textPrimary, lineHeight: 1.5, margin: "0 0 18px", fontFamily: FONT_BRAND_BODY },
   confirmBtnRow: { display: "flex", gap: 8, justifyContent: "flex-end" },
   confirmCancelBtn: {
-    background: "none", border: "1px solid #2A3339", color: "#C7D0D4", borderRadius: 8,
-    padding: "8px 14px", fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BODY,
+    background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textPrimary, borderRadius: 8,
+    padding: "8px 14px", fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BRAND_BODY,
   },
   confirmDangerBtn: {
     background: "#E2604F", border: "none", color: "#fff", borderRadius: 8,
-    padding: "8px 14px", fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 600,
+    padding: "8px 14px", fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BRAND_BODY, fontWeight: 600,
   },
   exportOptionList: { display: "flex", flexDirection: "column", gap: 8 },
   exportOptionBtn: {
-    background: "#1C242A", border: "1px solid #2A3339", color: "#E8EDEF", borderRadius: 8,
-    padding: "12px 14px", fontSize: 13, cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 500,
+    background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textPrimary, borderRadius: 8,
+    padding: "12px 14px", fontSize: 13, cursor: "pointer", fontFamily: FONT_BRAND_BODY, fontWeight: 500,
     textAlign: "left",
   },
 
   emptyState: {
     display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-    height: "100%", textAlign: "center", padding: 40, gap: 4,
+    height: "100%", textAlign: "center", padding: 40, gap: 4, background: BRAND_DARK,
   },
-  emptyP: { color: "#7A8A93", fontSize: 13.5, maxWidth: 320, margin: "0 0 14px" },
+  emptyP: { color: "#DCEAE4", fontSize: 13.5, maxWidth: 320, margin: "0 0 14px", fontFamily: FONT_BRAND_BODY },
 
   saveError: {
     position: "fixed", bottom: 20, right: 20, background: "#2E1520", border: "1px solid #E2604F",
@@ -6003,18 +6057,18 @@ const styles = {
 
   // Export / import-text modals
   exportModal: {
-    background: "#171E23", border: "1px solid #2A3339", borderRadius: 14, padding: 24,
+    background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 14, padding: 24,
     width: 560, maxWidth: "90vw", maxHeight: "85vh", display: "flex", flexDirection: "column",
   },
-  exportHint: { fontSize: 12.5, color: "#B9C4CA", lineHeight: 1.5, margin: "0 0 14px" },
+  exportHint: { fontSize: 12.5, color: OVERVIEW_LIGHT.textSecondary, lineHeight: 1.5, margin: "0 0 14px", fontFamily: FONT_BRAND_BODY },
   copyBtn: {
-    display: "flex", alignItems: "center", gap: 8, alignSelf: "flex-start", background: "#1C242A",
-    border: "1px solid #2A3339", color: "#E8EDEF", borderRadius: 8, padding: "8px 14px",
-    fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BODY, fontWeight: 500, marginBottom: 12,
+    display: "flex", alignItems: "center", gap: 8, alignSelf: "flex-start", background: OVERVIEW_LIGHT.card,
+    border: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textPrimary, borderRadius: 8, padding: "8px 14px",
+    fontSize: 12.5, cursor: "pointer", fontFamily: FONT_BRAND_BODY, fontWeight: 500, marginBottom: 12,
   },
   exportTextarea: {
-    width: "100%", flex: 1, minHeight: 260, background: "#0F1417", color: "#8FDBAE",
-    border: "1px solid #2A3339", borderRadius: 8, padding: 12, fontSize: 11, fontFamily: FONT_MONO,
+    width: "100%", flex: 1, minHeight: 260, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary,
+    border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 8, padding: 12, fontSize: 11, fontFamily: FONT_MONO,
     resize: "vertical",
   },
   importError: { color: "#E2604F", fontSize: 12, marginTop: 8 },
@@ -6027,26 +6081,26 @@ const styles = {
     fontFamily: FONT_MONO, fontSize: 11.5, color: OVERVIEW_LIGHT.textSecondary, padding: "0 6px", display: "inline-block", cursor: "default",
   },
   miniInput: {
-    width: "100%", background: "#1C242A", color: "#E8EDEF", border: "1px solid #2A3339", borderRadius: 6,
-    padding: "5px 8px", fontSize: 11.5, fontFamily: FONT_BODY,
+    width: "100%", background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 6,
+    padding: "5px 8px", fontSize: 11.5, fontFamily: FONT_BRAND_BODY,
   },
   addRowBtn: {
-    display: "flex", alignItems: "center", justifyContent: "center", background: "#F5B942", color: "#161311",
+    display: "flex", alignItems: "center", justifyContent: "center", background: BRAND_DARK, color: "#FFFFFF",
     border: "none", borderRadius: 6, width: 26, height: 26, cursor: "pointer",
   },
-  rowDeleteBtn: { background: "none", border: "none", color: "#5A6870", cursor: "pointer", padding: 4 },
+  rowDeleteBtn: { background: "none", border: "none", color: "#8FA39B", cursor: "pointer", padding: 4 },
   chartBox: { background: "#171E23", border: "1px solid #232D33", borderRadius: 12, padding: "16px 8px 4px", marginBottom: 18 },
   attachBtn: {
-    display: "inline-flex", alignItems: "center", gap: 3, background: "none", border: "1px solid #2A3339",
-    borderRadius: 6, color: "#7A8A93", cursor: "pointer", padding: "3px 6px", fontSize: 10.5, fontFamily: FONT_MONO,
+    display: "inline-flex", alignItems: "center", gap: 3, background: "none", border: `1px solid ${OVERVIEW_LIGHT.border}`,
+    borderRadius: 6, color: OVERVIEW_LIGHT.textSecondary, cursor: "pointer", padding: "3px 6px", fontSize: 10.5, fontFamily: FONT_MONO,
   },
   attachPopover: {
-    position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 30, background: "#171E23",
-    border: "1px solid #2A3339", borderRadius: 10, padding: 10, width: 260, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+    position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 30, background: "#FFFFFF",
+    border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 10, padding: 10, width: 260, boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
   },
   attachRow: {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "5px 2px",
-    borderBottom: "1px solid #232D33", fontSize: 11.5, color: "#E8EDEF",
+    borderBottom: `1px solid ${OVERVIEW_LIGHT.border}`, fontSize: 11.5, color: OVERVIEW_LIGHT.textPrimary,
   },
 
   // Selector de ítem de presupuesto con buscador (PresupuestoItemSelect)
@@ -6081,13 +6135,13 @@ const styles = {
   },
   pasteBtnRow: { display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 10 },
   pasteBtn: {
-    display: "flex", alignItems: "center", gap: 6, background: "#1C242A", border: "1px solid #2A3339",
-    color: "#E8EDEF", borderRadius: 8, padding: "7px 12px", fontSize: 12, cursor: "pointer",
-    fontFamily: FONT_BODY, fontWeight: 500,
+    display: "flex", alignItems: "center", gap: 6, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`,
+    color: OVERVIEW_LIGHT.textPrimary, borderRadius: 8, padding: "7px 12px", fontSize: 12, cursor: "pointer",
+    fontFamily: FONT_BRAND_BODY, fontWeight: 500,
   },
   pastePreview: {
-    fontSize: 12.5, color: "#B9C4CA", lineHeight: 1.5, background: "#1C242A", border: "1px solid #2A3339",
-    borderRadius: 8, padding: "10px 12px", marginBottom: 12,
+    fontSize: 12.5, color: OVERVIEW_LIGHT.textPrimary, lineHeight: 1.5, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`,
+    borderRadius: 8, padding: "10px 12px", marginBottom: 12, fontFamily: FONT_BRAND_BODY,
   },
 
   // UPME step timeline

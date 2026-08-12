@@ -11,7 +11,7 @@ const LABEL_COL_W = 260;
 export default function CronogramaGantt({ tasks }) {
   const withDates = tasks.filter((t) => t.fechaInicio && t.fechaFin);
   if (withDates.length === 0) {
-    return <div style={{ color: "#7A8A93", fontSize: 13, padding: "10px 0" }}>Agrega actividades con fechas para ver el Gantt.</div>;
+    return <div style={{ color: "#DCEAE4", fontSize: 13, padding: "10px 0" }}>Agrega actividades con fechas para ver el Gantt.</div>;
   }
 
   const minDate = withDates.reduce((m, t) => (t.fechaInicio < m ? t.fechaInicio : m), withDates[0].fechaInicio);
@@ -70,19 +70,19 @@ export default function CronogramaGantt({ tasks }) {
   });
 
   return (
-    <div style={{ background: "#171E23", border: "1px solid #232D33", borderRadius: 12, overflow: "auto" }}>
+    <div style={{ background: "#F2F6F4", border: "1px solid #8FBBAC", borderRadius: 12, overflow: "auto" }}>
       <div style={{ display: "flex", width: LABEL_COL_W + chartW + 20, minWidth: "100%" }}>
-        <div style={{ width: LABEL_COL_W, flexShrink: 0, borderRight: "1px solid #232D33" }}>
-          <div style={{ height: 24, borderBottom: "1px solid #232D33" }} />
+        <div style={{ width: LABEL_COL_W, flexShrink: 0, borderRight: "1px solid #8FBBAC" }}>
+          <div style={{ height: 24, borderBottom: "1px solid #8FBBAC" }} />
           {tasks.map((t) => (
             <div
               key={t.id}
               title={t.nombre}
               style={{
                 height: ROW_H, display: "flex", alignItems: "center", padding: "0 10px",
-                fontSize: 11, color: t.esGrupo ? "#F5B942" : "#B9C4CA", fontWeight: t.esGrupo ? 700 : 400,
+                fontSize: 11, color: "#22312D", fontWeight: t.esGrupo ? 700 : 400,
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                background: t.esGrupo ? "#1C242A" : undefined,
+                background: t.esGrupo ? "#A9D3C4" : undefined,
               }}
             >
               {t.displayId ? `${t.displayId} · ` : ""}{t.nombre}
@@ -91,9 +91,9 @@ export default function CronogramaGantt({ tasks }) {
         </div>
 
         <div style={{ position: "relative", width: chartW + 20 }}>
-          <div style={{ height: 24, position: "relative", borderBottom: "1px solid #232D33" }}>
+          <div style={{ height: 24, position: "relative", borderBottom: "1px solid #8FBBAC" }}>
             {monthTicks.map((m, i) => (
-              <div key={i} style={{ position: "absolute", left: m.x, top: 4, fontSize: 10, color: "#7A8A93", borderLeft: "1px solid #232D33", paddingLeft: 4 }}>
+              <div key={i} style={{ position: "absolute", left: m.x, top: 4, fontSize: 10, color: "#3E5850", borderLeft: "1px solid #8FBBAC", paddingLeft: 4 }}>
                 {m.label}
               </div>
             ))}
@@ -102,7 +102,7 @@ export default function CronogramaGantt({ tasks }) {
           <svg width={chartW + 20} height={chartH} style={{ position: "absolute", top: 24, left: 0, pointerEvents: "none" }}>
             <defs>
               <marker id="gantt-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                <path d="M0,0 L6,3 L0,6 Z" fill="#5A6870" />
+                <path d="M0,0 L6,3 L0,6 Z" fill="#8FA39B" />
               </marker>
               <marker id="gantt-arrow-critical" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
                 <path d="M0,0 L6,3 L0,6 Z" fill="#E2604F" />
@@ -113,7 +113,7 @@ export default function CronogramaGantt({ tasks }) {
                 key={c.key}
                 d={c.d}
                 fill="none"
-                stroke={c.critical ? "#E2604F" : "#3A444B"}
+                stroke={c.critical ? "#E2604F" : "#B8C4BF"}
                 strokeWidth={c.critical ? 1.5 : 1}
                 markerEnd={c.critical ? "url(#gantt-arrow-critical)" : "url(#gantt-arrow)"}
               />
