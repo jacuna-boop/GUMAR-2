@@ -20,6 +20,10 @@ import {
   buildFlujoCajaPeriodos,
   flujoCajaSumaPct,
   flujoCajaTotalesPorPeriodo,
+  migrateOrdenPresupuestoItems,
+  ordenPresupuestoAsignado,
+  pagadoPorItemMap,
+  costoRealPorItemMap,
 } from "./data.js";
 
 describe("parseColombianNumber", () => {
@@ -296,6 +300,15 @@ describe("ensureFullProjectData (no debe romper con datos viejos/corruptos)", ()
     expect(() => ensureFullProjectData({})).not.toThrow();
     expect(() => ensureFullProjectData(null)).not.toThrow();
   });
+
+  it("migra órdenes viejas con presupuestoItemId a presupuestoItems", () => {
+    const result = ensureFullProjectData({
+      pagos: { ordenes: [{ id: "o1", valorTotal: 2000000, presupuestoItemId: "it1", pagos: [] }] },
+    });
+    expect(result.pagos.ordenes[0].presupuestoItems).toEqual([
+      expect.objectContaining({ itemId: "it1", valor: 2000000 }),
+    ]);
+  });
 });
 
 describe("energización sin fecha de inicio no debe marcar atraso (regresión)", () => {
@@ -367,5 +380,81 @@ describe("flujoCajaSumaPct / flujoCajaTotalesPorPeriodo", () => {
     const result = flujoCajaTotalesPorPeriodo(items, porcentajes, periodos);
     expect(result[0].total).toBe(1500000);
     expect(result[1].total).toBe(0);
+  });
+});
+
+describe("migrateOrdenPresupuestoItems", () => {
+  it("convierte el presupuestoItemId viejo en un único link al 100% del valor de la orden", () => {
+    const orden = { id: "o1", valorTotal: 5000000, presupuestoItemId: "it1", pagos: [] };
+    const result = migrateOrdenPresupuestoItems(orden);
+    expect(result.presupuestoItems).toEqual([expect.objectContaining({ itemId: "it1", valor: 5000000 })]);
+  });
+
+  it("no toca una orden que ya tiene presupuestoItems", () => {
+    const orden = { id: "o1", presupuestoItems: [{ id: "l1", itemId: "it1", valor: 100 }] };
+    const result = migrateOrdenPresupuestoItems(orden);
+    expect(result).toBe(orden);
+  });
+
+  it("una orden sin ningún amarre queda con presupuestoItems vacío", () => {
+    const orden = { id: "o1", valorTotal: 100, pagos: [] };
+    const result = migrateOrdenPresupuestoItems(orden);
+    expect(result.presupuestoItems).toEqual([]);
+  });
+});
+
+describe("ordenPresupuestoAsignado", () => {
+  it("suma el valor de todos los links de una orden", () => {
+    const orden = { presupuestoItems: [{ id: "l1", itemId: "it1", valor: 600000 }, { id: "l2", itemId: "it2", valor: 400000 }] };
+    expect(ordenPresupuestoAsignado(orden)).toBe(1000000);
+  });
+
+  it("una orden sin links da 0", () => {
+    expect(ordenPresupuestoAsignado({ presupuestoItems: [] })).toBe(0);
+  });
+});
+
+describe("pagadoPorItemMap", () => {
+  it("reparte lo pagado de una orden proporcionalmente entre sus ítems amarrados", () => {
+    const pagos = {
+      ordenes: [{
+        id: "o1",
+        presupuestoItems: [{ id: "l1", itemId: "it1", valor: 600000 }, { id: "l2", itemId: "it2", valor: 400000 }],
+        pagos: [{ valor: 1000000, estado: "pagado" }],
+      }],
+    };
+    const map = pagadoPorItemMap(pagos);
+    expect(map.get("it1")).toBe(600000);
+    expect(map.get("it2")).toBe(400000);
+  });
+
+  it("ignora órdenes sin ítems amarrados", () => {
+    const pagos = { ordenes: [{ id: "o1", presupuestoItems: [], pagos: [{ valor: 100, estado: "pagado" }] }] };
+    expect(pagadoPorItemMap(pagos).size).toBe(0);
+  });
+});
+
+describe("costoRealPorItemMap", () => {
+  it("suma el valor completo asignado a cada ítem, sin importar lo pagado", () => {
+    const pagos = {
+      ordenes: [
+        { id: "o1", presupuestoItems: [{ id: "l1", itemId: "it1", valor: 700000 }], pagos: [] },
+        { id: "o2", presupuestoItems: [{ id: "l2", itemId: "it1", valor: 300000 }], pagos: [{ valor: 999, estado: "pagado" }] },
+      ],
+    };
+    expect(costoRealPorItemMap(pagos).get("it1")).toBe(1000000);
+  });
+
+  it("una orden repartida entre varios ítems suma a cada uno por separado", () => {
+    const pagos = {
+      ordenes: [{
+        id: "o1",
+        presupuestoItems: [{ id: "l1", itemId: "it1", valor: 600000 }, { id: "l2", itemId: "it2", valor: 400000 }],
+        pagos: [],
+      }],
+    };
+    const map = costoRealPorItemMap(pagos);
+    expect(map.get("it1")).toBe(600000);
+    expect(map.get("it2")).toBe(400000);
   });
 });

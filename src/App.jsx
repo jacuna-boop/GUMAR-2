@@ -30,7 +30,8 @@ import {
   presupuestoTotals, presupuestoListTotal, groupPresupuestoItems, calcPresupuestoItem, parsePresupuestoPaste,
   buildFlujoCajaPeriodos, flujoCajaSumaPct, flujoCajaTotalesPorPeriodo,
   parseColombianNumber,
-  ordenPagado, ordenProgramado, ordenSaldo, pagosTotals, pagosProximosAlertas, fmtMoney,
+  ordenPagado, ordenProgramado, ordenSaldo, ordenPresupuestoAsignado, pagosTotals, pagosProximosAlertas, fmtMoney,
+  pagadoPorItemMap, costoRealPorItemMap,
 } from "./lib/data.js";
 import { buildInformeProyecto } from "./lib/informePPI01.js";
 import { buildInformePPI01Workbook } from "./lib/informePPI01Excel.js";
@@ -2506,13 +2507,14 @@ function PresupuestoModule({ data, onChange, pagos, projectName }) {
 
   // Suma lo pagado (solo pagos en estado "pagado", no "programado") de las órdenes que la persona
   // amarró a cada ítem del presupuesto desde la pestaña Pagos — para ver de un vistazo cuánto se ha
-  // pagado realmente hacia cada actividad.
-  const pagadoPorItem = new Map();
-  (pagos?.ordenes || []).forEach((o) => {
-    if (!o.presupuestoItemId) return;
-    const actual = pagadoPorItem.get(o.presupuestoItemId) || 0;
-    pagadoPorItem.set(o.presupuestoItemId, actual + ordenPagado(o));
-  });
+  // pagado realmente hacia cada actividad. Una orden se puede repartir entre varios ítems, así que
+  // esto reparte lo pagado proporcionalmente (ver pagadoPorItemMap en data.js).
+  const pagadoPorItem = pagadoPorItemMap(pagos);
+
+  // Costo real (valor de las órdenes amarradas, ver pestaña "Costo real") por ítem — se usa para
+  // avisar en Presupuesto de ejecución cuándo un ítem quedó corto: si ya se contrató más de lo que
+  // dice ejecución, esa fila se resalta para que la persona la actualice a mano.
+  const costoRealPorItem = costoRealPorItemMap(pagos);
 
   // Por categoría: se ve completa en la página sin scroll (útil como vista general).
   const chartDataByCategoria = (() => {
@@ -2721,6 +2723,13 @@ function PresupuestoModule({ data, onChange, pagos, projectName }) {
         </button>
         <button
           className="view-toggle"
+          style={{ ...lightSubTabBtn, ...(activeSub === "costoReal" ? lightSubTabBtnActive : {}) }}
+          onClick={() => setActiveSub("costoReal")}
+        >
+          Costo real
+        </button>
+        <button
+          className="view-toggle"
           style={{ ...lightSubTabBtn, ...(activeSub === "flujoCaja" ? lightSubTabBtnActive : {}) }}
           onClick={() => setActiveSub("flujoCaja")}
         >
@@ -2748,7 +2757,10 @@ function PresupuestoModule({ data, onChange, pagos, projectName }) {
           linkedIds={baseIds}
           baseValoresPorItem={baseValoresPorItem}
           baseValoresPorCategoria={baseValoresPorCategoria}
+          costoRealPorItem={costoRealPorItem}
         />
+      ) : activeSub === "costoReal" ? (
+        <CostoRealModule items={data.base} pagos={pagos} />
       ) : (
         <FlujoCajaModule
           items={data.base}
@@ -2917,7 +2929,78 @@ function FlujoCajaModule({ items, flujoCaja, onChange }) {
   );
 }
 
-function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds, baseValoresPorItem, baseValoresPorCategoria, pagadoPorItem, projectName }) {
+// Costo real: de solo lectura, muestra por ítem del presupuesto base cuánto suman las órdenes de
+// servicio de Pagos que tiene amarradas (su valor completo, no lo pagado/programado) — para ver el
+// costo realmente contratado por actividad sin tocar "Presupuesto de ejecución", que sigue siendo
+// 100% manual. Una orden se puede repartir entre varios ítems (ver Pagos), así que esto suma la
+// porción asignada a cada uno (costoRealPorItemMap en data.js).
+function CostoRealModule({ items, pagos }) {
+  const costoPorItem = costoRealPorItemMap(pagos);
+  const grouped = groupPresupuestoItems(items);
+  const totalAmarrado = Array.from(costoPorItem.values()).reduce((s, v) => s + v, 0);
+  const totalOrdenes = pagosTotals(pagos).totalOrdenes;
+  const sinAmarrar = Math.max(0, totalOrdenes - totalAmarrado);
+
+  const lightHint = { ...styles.exportHint, color: OVERVIEW_LIGHT.pageTextSecondary };
+  const lightTableWrap = { ...styles.cronoTableWrap, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTh = { ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTd = { ...styles.ovTd, color: OVERVIEW_LIGHT.textPrimary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+
+  return (
+    <div>
+      <p style={lightHint}>
+        Costo real de cada ítem del presupuesto base, según el valor completo de las órdenes de servicio que
+        tiene amarradas en Pagos (no lo pagado ni lo programado). Es de solo lectura y no afecta el presupuesto
+        de ejecución, que se sigue digitando a mano.
+      </p>
+      <div style={lightTableWrap}>
+        <table style={styles.overviewTable}>
+          <thead>
+            <tr>
+              <th style={lightOvTh}>Ítem</th>
+              <th style={lightOvTh}>Costo real (órdenes amarradas)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {grouped.map((group) => {
+              const groupTotal = group.items.reduce((s, it) => s + (costoPorItem.get(it.id) || 0), 0);
+              return (
+                <React.Fragment key={group.categoria}>
+                  <tr>
+                    <td style={styles.presGroupRow}>{group.categoria}</td>
+                    <td style={{ ...styles.presGroupRow, fontWeight: 700 }}>{fmtMoney(groupTotal)}</td>
+                  </tr>
+                  {group.items.map((it) => (
+                    <tr key={it.id}>
+                      <td style={lightOvTd}>{it.item ? `${it.item} · ` : ""}{it.descripcion}</td>
+                      <td style={{ ...lightOvTd, color: costoPorItem.get(it.id) ? BRAND_DARK : OVERVIEW_LIGHT.textSecondary }}>
+                        {fmtMoney(costoPorItem.get(it.id) || 0)}
+                      </td>
+                    </tr>
+                  ))}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td style={{ ...lightOvTd, fontWeight: 700 }}>Total amarrado a ítems</td>
+              <td style={{ ...lightOvTd, fontWeight: 700 }}>{fmtMoney(totalAmarrado)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {sinAmarrar > 0 && (
+        <div style={{ marginTop: 10, fontSize: 11.5, color: OVERVIEW_LIGHT.pageTextSecondary }}>
+          Hay <span style={{ color: "#FFE8B3", fontWeight: 700 }}>{fmtMoney(sinAmarrar)}</span> en órdenes de
+          servicio de Pagos sin ítem de presupuesto amarrado (o amarradas solo parcialmente).
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds, baseValoresPorItem, baseValoresPorCategoria, pagadoPorItem, costoRealPorItem, projectName }) {
   const [newItem, setNewItem] = useState({
     item: "", categoria: "", descripcion: "", cantidad: "", unidad: "",
     valorUnitario: "", ivaPct: "",
@@ -3065,9 +3148,11 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                   const isLinked = linkedIds && linkedIds.has(it.id);
                   const baseValor = baseValoresPorItem?.get(it.id);
                   const itemExcedido = isLinked && baseValor !== undefined && calc.valorTotal > baseValor;
+                  const costoReal = costoRealPorItem?.get(it.id) || 0;
+                  const necesitaActualizar = !!costoRealPorItem && costoReal > calc.valorTotal;
                   const editing = editingIds.has(it.id);
                   return (
-                    <tr key={it.id} style={itemExcedido ? { background: "#FBE4E1" } : undefined}>
+                    <tr key={it.id} style={(itemExcedido || necesitaActualizar) ? { background: "#FBE4E1" } : undefined}>
                       <td style={lightOvTd}>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           {isLinked && <span title="Viene del presupuesto base" style={{ color: BRAND_DARK }}>●</span>}
@@ -3114,9 +3199,14 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
                         )}
                       </td>
                       <td style={lightOvTd}>{fmtMoney(calc.valorUnitarioConIva)}</td>
-                      <td style={{ ...lightOvTd, fontWeight: 700, color: itemExcedido ? "#E2604F" : OVERVIEW_LIGHT.textPrimary }}>
+                      <td style={{ ...lightOvTd, fontWeight: 700, color: (itemExcedido || necesitaActualizar) ? "#E2604F" : OVERVIEW_LIGHT.textPrimary }}>
                         {fmtMoney(calc.valorTotal)}
                         {itemExcedido && <div style={lightExcedidoTag}>+{fmtMoney(calc.valorTotal - baseValor)} vs. base</div>}
+                        {necesitaActualizar && (
+                          <div style={lightExcedidoTag} title="El costo real (órdenes amarradas en Pagos) es mayor a lo digitado aquí">
+                            Costo real: {fmtMoney(costoReal)} — actualiza este ítem
+                          </div>
+                        )}
                       </td>
                       <td style={lightOvTd}>
                         {editing ? (
@@ -3535,6 +3625,7 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
   const [newOrden, setNewOrden] = useState({ numero: "", proveedor: "", descripcion: "", valorTotal: "", presupuestoItemId: "" });
   const [openId, setOpenId] = useState(null);
   const [newPago, setNewPago] = useState({ fecha: todayISO(), valor: "", concepto: "", estado: "pagado" });
+  const [newLink, setNewLink] = useState({ itemId: "", valor: "" });
   const [confirmDelete, setConfirmDelete] = useState(null); // { kind: "orden" | "pago", ordenId, pagoId, label } | null
   const [showTemplateUpload, setShowTemplateUpload] = useState(false);
   const [showRangeExport, setShowRangeExport] = useState(false);
@@ -3555,13 +3646,14 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
 
   const addOrden = () => {
     if (!newOrden.numero.trim() || !newOrden.valorTotal) return;
+    const valorTotal = Number(newOrden.valorTotal) || 0;
     const orden = {
       id: uid(),
       numero: newOrden.numero.trim(),
       proveedor: newOrden.proveedor.trim(),
       descripcion: newOrden.descripcion.trim(),
-      valorTotal: Number(newOrden.valorTotal) || 0,
-      presupuestoItemId: newOrden.presupuestoItemId || null,
+      valorTotal,
+      presupuestoItems: newOrden.presupuestoItemId ? [{ id: uid(), itemId: newOrden.presupuestoItemId, valor: valorTotal }] : [],
       pagos: [],
     };
     onChange({ ...data, ordenes: [...data.ordenes, orden] });
@@ -3573,6 +3665,34 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
   };
   const deleteOrden = (id) => onChange({ ...data, ordenes: data.ordenes.filter((o) => o.id !== id) });
   const askDeleteOrden = (o) => setConfirmDelete({ kind: "orden", ordenId: o.id, label: o.numero || "esta orden" });
+
+  // Una orden se puede repartir entre varios ítems del presupuesto: cada link guarda cuánto de esa
+  // orden le corresponde a ese ítem (ver costoRealPorItemMap en data.js, que suma esto por ítem).
+  const addPresupuestoLink = (ordenId) => {
+    if (!newLink.itemId) return;
+    const link = { id: uid(), itemId: newLink.itemId, valor: Number(newLink.valor) || 0 };
+    onChange({
+      ...data,
+      ordenes: data.ordenes.map((o) => (o.id === ordenId ? { ...o, presupuestoItems: [...(o.presupuestoItems || []), link] } : o)),
+    });
+    setNewLink({ itemId: "", valor: "" });
+  };
+  const updatePresupuestoLink = (ordenId, linkId, patch) => {
+    onChange({
+      ...data,
+      ordenes: data.ordenes.map((o) =>
+        o.id === ordenId ? { ...o, presupuestoItems: (o.presupuestoItems || []).map((l) => (l.id === linkId ? { ...l, ...patch } : l)) } : o
+      ),
+    });
+  };
+  const deletePresupuestoLink = (ordenId, linkId) => {
+    onChange({
+      ...data,
+      ordenes: data.ordenes.map((o) =>
+        o.id === ordenId ? { ...o, presupuestoItems: (o.presupuestoItems || []).filter((l) => l.id !== linkId) } : o
+      ),
+    });
+  };
 
   const addPago = (ordenId) => {
     if (!newPago.fecha || !newPago.valor) return;
@@ -3730,9 +3850,12 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                         value={o.descripcion || ""}
                         onChange={(e) => updateOrden(o.id, { descripcion: e.target.value })}
                       />
-                      {o.presupuestoItemId && presupuestoLabel(o.presupuestoItemId) && (
+                      {(o.presupuestoItems || []).length > 0 && (
                         <div style={{ fontSize: 10.5, color: BRAND_DARK, marginTop: 3 }}>
-                          → {presupuestoLabel(o.presupuestoItemId)}
+                          → {(o.presupuestoItems || [])
+                            .filter((l) => presupuestoLabel(l.itemId))
+                            .map((l) => `${presupuestoLabel(l.itemId)} (${fmtMoney(l.valor)})`)
+                            .join(" · ")}
                         </div>
                       )}
                     </td>
@@ -3767,15 +3890,69 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                     <tr>
                       <td colSpan={6} style={{ ...lightOvTd, background: "#EAF3EE" }}>
                         <div style={{ padding: "6px 4px" }}>
-                          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }}>
-                            <span>Ítem de presupuesto (opcional):</span>
-                            <PresupuestoItemSelect
-                              groups={presupuestoGrupos}
-                              value={o.presupuestoItemId || ""}
-                              onChange={(id) => updateOrden(o.id, { presupuestoItemId: id || null })}
-                              style={lightMiniInput}
-                            />
-                          </label>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: OVERVIEW_LIGHT.textPrimary, marginBottom: 6 }}>
+                            Ítems de presupuesto amarrados (opcional) — una orden se puede repartir entre varios
+                          </div>
+                          <table style={styles.overviewTable}>
+                            <thead>
+                              <tr>
+                                <th style={lightOvTh}>Ítem</th>
+                                <th style={lightOvTh}>Valor asignado</th>
+                                <th style={lightOvTh}></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(o.presupuestoItems || []).map((link) => (
+                                <tr key={link.id}>
+                                  <td style={lightOvTd}>
+                                    <PresupuestoItemSelect
+                                      groups={presupuestoGrupos}
+                                      value={link.itemId}
+                                      onChange={(id) => updatePresupuestoLink(o.id, link.id, { itemId: id })}
+                                      style={lightMiniInput}
+                                    />
+                                  </td>
+                                  <td style={lightOvTd}>
+                                    <MoneyInput
+                                      style={lightMiniInput}
+                                      value={link.valor}
+                                      onChange={(val) => updatePresupuestoLink(o.id, link.id, { valor: val })}
+                                    />
+                                  </td>
+                                  <td style={lightOvTd}>
+                                    <button style={lightRowDeleteBtn} onClick={() => deletePresupuestoLink(o.id, link.id)}><Trash2 size={13} /></button>
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr>
+                                <td style={lightOvTd}>
+                                  <PresupuestoItemSelect
+                                    groups={presupuestoGrupos}
+                                    value={newLink.itemId}
+                                    onChange={(id) => setNewLink({ ...newLink, itemId: id })}
+                                    style={lightMiniInput}
+                                    emptyLabel="Elegir ítem..."
+                                  />
+                                </td>
+                                <td style={lightOvTd}>
+                                  <MoneyInput style={lightMiniInput} placeholder="$" value={newLink.valor} onChange={(val) => setNewLink({ ...newLink, valor: val })} />
+                                </td>
+                                <td style={lightOvTd}>
+                                  <button style={lightAddRowBtn} onClick={() => addPresupuestoLink(o.id)}><Plus size={14} /></button>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          {(o.presupuestoItems || []).length > 0 && (() => {
+                            const asignado = ordenPresupuestoAsignado(o);
+                            const excede = asignado > o.valorTotal;
+                            return (
+                              <div style={{ fontSize: 10.5, color: excede ? "#E2604F" : OVERVIEW_LIGHT.textSecondary, margin: "4px 0 12px" }}>
+                                Asignado: {fmtMoney(asignado)} de {fmtMoney(o.valorTotal)} (valor de la orden)
+                                {excede && " — supera el valor de la orden."}
+                              </div>
+                            );
+                          })()}
                           <table style={styles.overviewTable}>
                             <thead>
                               <tr>

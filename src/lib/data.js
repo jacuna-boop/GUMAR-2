@@ -650,8 +650,29 @@ function emptyFlujoCajaState() {
 
 function emptyPagosState() {
   return {
-    ordenes: [], // { id, numero, proveedor, valorTotal, pagos: [{ id, fecha, valor, concepto }] }
+    ordenes: [], // { id, numero, proveedor, valorTotal, pagos: [{ id, fecha, valor, concepto }], presupuestoItems: [{ id, itemId, valor }] }
   };
+}
+
+// Antes, cada orden se amarraba a un solo ítem de presupuesto ("presupuestoItemId"). Ahora una orden
+// se puede repartir entre varios ítems ("presupuestoItems": lista de { id, itemId, valor }, donde
+// valor es cuánto de esa orden le corresponde a ese ítem — no tiene que sumar el valorTotal completo)
+// — ver la pestaña "Costo real" de Presupuesto, que usa esto para mostrar cuánto cuesta cada ítem
+// según las órdenes de servicio realmente contratadas. Esta función migra en caliente las órdenes
+// viejas: si ya tienen presupuestoItems no toca nada; si solo tienen el presupuestoItemId de antes,
+// arma un único link al 100% del valor de la orden.
+function migrateOrdenPresupuestoItems(orden) {
+  if (Array.isArray(orden.presupuestoItems)) return orden;
+  if (orden.presupuestoItemId) {
+    return { ...orden, presupuestoItems: [{ id: uid(), itemId: orden.presupuestoItemId, valor: Number(orden.valorTotal) || 0 }] };
+  }
+  return { ...orden, presupuestoItems: [] };
+}
+
+// Suma de lo asignado (presupuestoItems[].valor) de una orden — cuánto de su valorTotal ya está
+// repartido entre ítems del presupuesto. No tiene por qué sumar el valorTotal completo.
+function ordenPresupuestoAsignado(orden) {
+  return (orden.presupuestoItems || []).reduce((s, l) => s + (Number(l.valor) || 0), 0);
 }
 
 // Balance financiero del proyecto: hitos de pago esperados del cliente. Cada hito trae su fecha y
@@ -756,7 +777,9 @@ function ensureFullProjectData(data) {
       : emptyPresupuestoState();
 
   const rawPagos = data?.pagos;
-  const pagos = rawPagos && Array.isArray(rawPagos.ordenes) ? { ordenes: rawPagos.ordenes } : emptyPagosState();
+  const pagos = rawPagos && Array.isArray(rawPagos.ordenes)
+    ? { ordenes: rawPagos.ordenes.map(migrateOrdenPresupuestoItems) }
+    : emptyPagosState();
 
   const rawBalance = data?.balance;
   const balance = rawBalance && Array.isArray(rawBalance.hitos)
@@ -988,6 +1011,42 @@ function ordenProgramado(orden) {
 function ordenSaldo(orden) {
   return (Number(orden.valorTotal) || 0) - ordenPagado(orden);
 }
+
+// Reparte lo realmente pagado de una orden (ordenPagado) proporcionalmente entre los ítems de
+// presupuesto que tiene amarrados, según la porción de la orden asignada a cada uno — es lo que se
+// muestra en la columna "Pagado (real)" de Presupuesto (tanto base como ejecución). Los pagos en sí
+// se registran a nivel de la orden completa, no por ítem, así que esto es un prorrateo, no un dato
+// exacto por ítem.
+function pagadoPorItemMap(pagos) {
+  const map = new Map();
+  (pagos?.ordenes || []).forEach((o) => {
+    const links = o.presupuestoItems || [];
+    const totalAsignado = ordenPresupuestoAsignado(o);
+    if (totalAsignado <= 0) return;
+    const pagado = ordenPagado(o);
+    links.forEach((link) => {
+      if (!link.itemId) return;
+      const share = (Number(link.valor) || 0) / totalAsignado;
+      map.set(link.itemId, (map.get(link.itemId) || 0) + pagado * share);
+    });
+  });
+  return map;
+}
+
+// Costo real por ítem (pestaña "Costo real" de Presupuesto): para cada ítem, suma lo que le fue
+// asignado (presupuestoItems[].valor) en cada orden de servicio que lo tiene amarrado — el valor
+// completo de la orden amarrada, sin importar cuánto de esa orden se ha pagado o programado todavía.
+function costoRealPorItemMap(pagos) {
+  const map = new Map();
+  (pagos?.ordenes || []).forEach((o) => {
+    (o.presupuestoItems || []).forEach((link) => {
+      if (!link.itemId) return;
+      map.set(link.itemId, (map.get(link.itemId) || 0) + (Number(link.valor) || 0));
+    });
+  });
+  return map;
+}
+
 function pagosTotals(pagos) {
   const ordenes = pagos?.ordenes || [];
   const totalOrdenes = ordenes.reduce((s, o) => s + (Number(o.valorTotal) || 0), 0);
@@ -1884,6 +1943,10 @@ export {
   ordenPagado,
   ordenProgramado,
   ordenSaldo,
+  ordenPresupuestoAsignado,
+  migrateOrdenPresupuestoItems,
+  pagadoPorItemMap,
+  costoRealPorItemMap,
   pagosTotals,
   pagosProximosAlertas,
   fmtMoney,
