@@ -944,6 +944,71 @@ function MoneyInput({ value, onChange, style, placeholder }) {
   );
 }
 
+// Selector de ítem de presupuesto con buscador: la lista de ~90 ítems en varias categorías es
+// larga para desplazarse a mano en un <select> nativo, así que esto es un combobox — al enfocar
+// se abre la lista completa (agrupada por categoría) y al escribir se filtra por código de ítem o
+// descripción (sin distinguir mayúsculas/acentos), igual que el buscador de Pagos.
+function PresupuestoItemSelect({ groups, value, onChange, style, emptyLabel = "Sin vincular" }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    const onClickOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  const normalize = (s) => (s || "").toString().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const itemLabel = (it) => (it.item ? `${it.item} · ` : "") + it.descripcion;
+  const selected = groups.flatMap((g) => g.items).find((it) => it.id === value);
+  const q = normalize(query);
+  const filteredGroups = q
+    ? groups
+        .map((g) => ({ ...g, items: g.items.filter((it) => normalize(itemLabel(it)).includes(q)) }))
+        .filter((g) => g.items.length > 0)
+    : groups;
+
+  const choose = (id) => {
+    onChange(id);
+    setQuery("");
+    setOpen(false);
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <input
+        style={style}
+        placeholder={emptyLabel}
+        value={open ? query : selected ? itemLabel(selected) : ""}
+        onFocus={() => setQuery("")}
+        onChange={(e) => { setOpen(true); setQuery(e.target.value); }}
+        onClick={() => setOpen(true)}
+      />
+      {open && (
+        <div style={styles.presItemSelectMenu}>
+          <div className="pres-item-row" style={styles.presItemSelectRow} onMouseDown={() => choose("")}>{emptyLabel}</div>
+          {filteredGroups.length === 0 && (
+            <div style={{ ...styles.presItemSelectRow, cursor: "default", color: "#8FA39B" }}>Sin resultados</div>
+          )}
+          {filteredGroups.map((g) => (
+            <div key={g.categoria}>
+              <div style={styles.presItemSelectGroupLabel}>{g.categoria}</div>
+              {g.items.map((it) => (
+                <div key={it.id} className="pres-item-row" style={styles.presItemSelectRow} onMouseDown={() => choose(it.id)}>
+                  {itemLabel(it)}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Botón de "adjuntos" reutilizable: certificados UPME, actas de energización, fotos de avance de
 // obra. Sube a un bucket privado de Supabase Storage y guarda quién/cuándo en la tabla "attachments".
 // Los archivos se descargan con URL firmada temporal (el bucket no es público). En modo lector no
@@ -3479,22 +3544,12 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                         <div style={{ padding: "6px 4px" }}>
                           <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }}>
                             <span>Ítem de presupuesto (opcional):</span>
-                            <select
-                              style={lightMiniInput}
+                            <PresupuestoItemSelect
+                              groups={presupuestoGrupos}
                               value={o.presupuestoItemId || ""}
-                              onChange={(e) => updateOrden(o.id, { presupuestoItemId: e.target.value || null })}
-                            >
-                              <option value="">Sin vincular</option>
-                              {presupuestoGrupos.map((g) => (
-                                <optgroup key={g.categoria} label={g.categoria}>
-                                  {g.items.map((it) => (
-                                    <option key={it.id} value={it.id}>
-                                      {it.item ? `${it.item} · ` : ""}{it.descripcion}
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              ))}
-                            </select>
+                              onChange={(id) => updateOrden(o.id, { presupuestoItemId: id || null })}
+                              style={lightMiniInput}
+                            />
                           </label>
                           <table style={styles.overviewTable}>
                             <thead>
@@ -3608,22 +3663,13 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
               </td>
               <td style={lightOvTd}>
                 <input style={lightMiniInput} placeholder="Concepto de la orden" value={newOrden.descripcion} onChange={(e) => setNewOrden({ ...newOrden, descripcion: e.target.value })} />
-                <select
-                  style={{ ...lightMiniInput, marginTop: 4, fontSize: 11 }}
+                <PresupuestoItemSelect
+                  groups={presupuestoGrupos}
                   value={newOrden.presupuestoItemId}
-                  onChange={(e) => setNewOrden({ ...newOrden, presupuestoItemId: e.target.value })}
-                >
-                  <option value="">Ítem de presupuesto (opcional)</option>
-                  {presupuestoGrupos.map((g) => (
-                    <optgroup key={g.categoria} label={g.categoria}>
-                      {g.items.map((it) => (
-                        <option key={it.id} value={it.id}>
-                          {it.item ? `${it.item} · ` : ""}{it.descripcion}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
+                  onChange={(id) => setNewOrden({ ...newOrden, presupuestoItemId: id })}
+                  style={{ ...lightMiniInput, marginTop: 4, fontSize: 11 }}
+                  emptyLabel="Ítem de presupuesto (opcional)"
+                />
               </td>
               <td style={lightOvTd}>
                 <input style={lightMiniInput} placeholder="Proveedor" value={newOrden.proveedor} onChange={(e) => setNewOrden({ ...newOrden, proveedor: e.target.value })} />
@@ -6001,6 +6047,21 @@ const styles = {
   attachRow: {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "5px 2px",
     borderBottom: "1px solid #232D33", fontSize: 11.5, color: "#E8EDEF",
+  },
+
+  // Selector de ítem de presupuesto con buscador (PresupuestoItemSelect)
+  presItemSelectMenu: {
+    position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 40,
+    background: "#FFFFFF", border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 8,
+    maxHeight: 280, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+  },
+  presItemSelectGroupLabel: {
+    padding: "6px 10px", fontSize: 10.5, fontWeight: 700, color: OVERVIEW_LIGHT.textSecondary,
+    background: "#F2F6F4", textTransform: "uppercase", letterSpacing: 0.3, fontFamily: FONT_BRAND_BODY,
+  },
+  presItemSelectRow: {
+    padding: "7px 12px", fontSize: 12, color: OVERVIEW_LIGHT.textPrimary, cursor: "pointer",
+    fontFamily: FONT_BRAND_BODY,
   },
 
   // Presupuesto module

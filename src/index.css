@@ -6,6 +6,7 @@ select option { background: #FFFFFF; color: #22312D; }
 select optgroup { background: #F2F6F4; color: #22312D; font-style: normal; }
 
 .sb-nav-btn:active { background: #F2F6F4 !important; color: #22312D !important; }
+.pres-item-row:hover { background: #EAF3EE; }
 
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

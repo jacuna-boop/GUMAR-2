@@ -145,6 +145,7 @@ language sql stable security definer set search_path = public as $$
     select 1 from profiles p
     join cargos c on c.id = p.cargo_id
     where p.id = auth.uid()
+    and p.role <> 'lector'
     and coalesce((to_jsonb(c) ->> perm)::boolean, false)
   )
 $$;
@@ -157,6 +158,7 @@ returns boolean
 language sql stable security definer set search_path = public as $$
   select public.is_admin() or exists (
     select 1 from profiles p join cargos c on c.id = p.cargo_id where p.id = auth.uid()
+    and p.role <> 'lector'
     and (
       c.puede_editar_upme or c.puede_editar_energizacion or c.puede_editar_cronograma
       or c.puede_editar_presupuesto or c.puede_editar_pagos or c.puede_editar_balance
