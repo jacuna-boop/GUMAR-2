@@ -627,6 +627,24 @@ function emptyPresupuestoState() {
     // valorUnitarioConIva, valorTotal e ivaRecuperable se calculan (ver calcPresupuestoItem)
     base: [],
     ejecucion: [],
+    flujoCaja: emptyFlujoCajaState(),
+  };
+}
+
+// Flujo de caja: distribuye el valor total de cada ítem del presupuesto BASE en porcentajes por
+// período (quincenal o mensual), igual que la hoja "FLUJO DE CAJA" del Excel de referencia (PP-F-02):
+// cada ítem tiene un % manual por período que debería sumar 100%, y el valor en $ de cada celda es
+// total del ítem × ese %. Quincenal y mensual se guardan por separado (porcentajesQuincenal /
+// porcentajesMensual) para que cambiar el modo no borre lo que ya se llenó en el otro.
+// Los porcentajes se indexan por posición de período (0, 1, 2...), calculada a partir de
+// fechaInicio/fechaFin/modo — ver buildFlujoCajaPeriodos.
+function emptyFlujoCajaState() {
+  return {
+    fechaInicio: "",
+    fechaFin: "",
+    modo: "quincenal", // "quincenal" | "mensual"
+    porcentajesQuincenal: {}, // { [itemId]: { [periodoIndex]: pct (0-100) } }
+    porcentajesMensual: {},
   };
 }
 
@@ -657,6 +675,7 @@ function clonePresupuestoState(presupuesto) {
   return {
     base: (presupuesto?.base || []).map(remap),
     ejecucion: (presupuesto?.ejecucion || []).map(remap),
+    flujoCaja: emptyFlujoCajaState(),
   };
 }
 function cloneCronogramaState(cronograma) {
@@ -721,9 +740,19 @@ function emptyProjectData() {
 // or before "presupuesto" moved from {items} to {base, ejecucion})
 function ensureFullProjectData(data) {
   const rawPresupuesto = data?.presupuesto;
+  const rawFlujoCaja = rawPresupuesto?.flujoCaja;
+  const flujoCaja = rawFlujoCaja && typeof rawFlujoCaja === "object"
+    ? {
+        fechaInicio: rawFlujoCaja.fechaInicio || "",
+        fechaFin: rawFlujoCaja.fechaFin || "",
+        modo: rawFlujoCaja.modo === "mensual" ? "mensual" : "quincenal",
+        porcentajesQuincenal: rawFlujoCaja.porcentajesQuincenal && typeof rawFlujoCaja.porcentajesQuincenal === "object" ? rawFlujoCaja.porcentajesQuincenal : {},
+        porcentajesMensual: rawFlujoCaja.porcentajesMensual && typeof rawFlujoCaja.porcentajesMensual === "object" ? rawFlujoCaja.porcentajesMensual : {},
+      }
+    : emptyFlujoCajaState();
   const presupuesto =
     rawPresupuesto && (rawPresupuesto.base || rawPresupuesto.ejecucion)
-      ? { base: rawPresupuesto.base || [], ejecucion: rawPresupuesto.ejecucion || [] }
+      ? { base: rawPresupuesto.base || [], ejecucion: rawPresupuesto.ejecucion || [], flujoCaja }
       : emptyPresupuestoState();
 
   const rawPagos = data?.pagos;
@@ -876,6 +905,71 @@ function groupPresupuestoItems(items) {
     map[cat].push(it);
   });
   return order.map((cat) => ({ categoria: cat, items: map[cat] }));
+}
+
+// Arma la lista de períodos (quincenal o mensual) entre fechaInicio y fechaFin, en orden — el
+// índice de cada uno (0, 1, 2...) es la clave que se usa para guardar los porcentajes por ítem
+// (ver emptyFlujoCajaState). Si falta alguna fecha o fechaFin < fechaInicio, devuelve [].
+function buildFlujoCajaPeriodos(fechaInicio, fechaFin, modo) {
+  if (!fechaInicio || !fechaFin) return [];
+  const start = new Date(fechaInicio + "T00:00:00");
+  const end = new Date(fechaFin + "T00:00:00");
+  if (isNaN(start) || isNaN(end) || end < start) return [];
+
+  const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  const periodos = [];
+  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  let index = 0;
+  while (cursor <= end) {
+    const year = cursor.getFullYear();
+    const month = cursor.getMonth();
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    if (modo === "mensual") {
+      const from = new Date(year, month, 1);
+      const to = new Date(year, month, lastDay);
+      periodos.push({
+        index, label: `${MESES[month]} ${year}`,
+        start: from.toISOString().slice(0, 10), end: to.toISOString().slice(0, 10),
+      });
+      index++;
+    } else {
+      const midDay = Math.min(15, lastDay);
+      periodos.push({
+        index, label: `${MESES[month]} Q1`,
+        start: new Date(year, month, 1).toISOString().slice(0, 10),
+        end: new Date(year, month, midDay).toISOString().slice(0, 10),
+      });
+      index++;
+      if (midDay < lastDay) {
+        periodos.push({
+          index, label: `${MESES[month]} Q2`,
+          start: new Date(year, month, midDay + 1).toISOString().slice(0, 10),
+          end: new Date(year, month, lastDay).toISOString().slice(0, 10),
+        });
+        index++;
+      }
+    }
+    cursor = new Date(year, month + 1, 1);
+  }
+  return periodos;
+}
+
+// Suma de porcentajes que un ítem tiene asignados en todos los períodos — para avisar en la fila
+// si no suma 100% (no bloquea, solo advierte, ver PresupuestoModule).
+function flujoCajaSumaPct(porcentajesItem) {
+  return Object.values(porcentajesItem || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+}
+
+// Total en $ de cada período, sumando (valor total del ítem × su % en ese período) de todos los
+// ítems del presupuesto base — es lo que arma la fila de "Total" y, agregado, la curva del flujo.
+function flujoCajaTotalesPorPeriodo(items, porcentajes, periodos) {
+  return periodos.map((p) => {
+    const total = (items || []).reduce((s, it) => {
+      const pct = Number(porcentajes?.[it.id]?.[p.index]) || 0;
+      return s + calcPresupuestoItem(it).valorTotal * (pct / 100);
+    }, 0);
+    return { ...p, total };
+  });
 }
 
 // Un pago cuenta como realizado si su estado es "pagado" (o no tiene estado, para compatibilidad
@@ -1736,6 +1830,10 @@ export {
   emptyEnergizacionState,
   emptyCronogramaState,
   emptyPresupuestoState,
+  emptyFlujoCajaState,
+  buildFlujoCajaPeriodos,
+  flujoCajaSumaPct,
+  flujoCajaTotalesPorPeriodo,
   emptyPagosState,
   emptyBalanceState,
   balanceTotals,

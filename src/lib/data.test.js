@@ -17,6 +17,9 @@ import {
   emptyEnergizacionState,
   nextEnergizacionMilestone,
   uid,
+  buildFlujoCajaPeriodos,
+  flujoCajaSumaPct,
+  flujoCajaTotalesPorPeriodo,
 } from "./data.js";
 
 describe("parseColombianNumber", () => {
@@ -285,7 +288,9 @@ describe("parsePresupuestoPaste", () => {
 describe("ensureFullProjectData (no debe romper con datos viejos/corruptos)", () => {
   it("cae a estado vacío si presupuesto no tiene base/ejecucion", () => {
     const result = ensureFullProjectData({ presupuesto: { items: [] } });
-    expect(result.presupuesto).toEqual({ base: [], ejecucion: [] });
+    expect(result.presupuesto.base).toEqual([]);
+    expect(result.presupuesto.ejecucion).toEqual([]);
+    expect(result.presupuesto.flujoCaja.modo).toBe("quincenal");
   });
   it("acepta un objeto totalmente vacío ('{}'::jsonb de Postgres) sin lanzar error", () => {
     expect(() => ensureFullProjectData({})).not.toThrow();
@@ -308,5 +313,59 @@ describe("energización sin fecha de inicio no debe marcar atraso (regresión)",
     const ener = { ...emptyEnergizacionState(), fechaInicio: "2000-01-01" }; // muy en el pasado
     const next = nextEnergizacionMilestone(ener);
     expect(next.delayed).toBe(true);
+  });
+});
+
+describe("buildFlujoCajaPeriodos", () => {
+  it("sin fechas, no hay períodos", () => {
+    expect(buildFlujoCajaPeriodos("", "", "quincenal")).toEqual([]);
+  });
+
+  it("quincenal: un mes completo son 2 períodos (Q1, Q2)", () => {
+    const periodos = buildFlujoCajaPeriodos("2026-07-01", "2026-07-31", "quincenal");
+    expect(periodos.map((p) => p.label)).toEqual(["Jul Q1", "Jul Q2"]);
+    expect(periodos[0].start).toBe("2026-07-01");
+    expect(periodos[0].end).toBe("2026-07-15");
+    expect(periodos[1].start).toBe("2026-07-16");
+    expect(periodos[1].end).toBe("2026-07-31");
+  });
+
+  it("mensual: de julio a septiembre son 3 períodos", () => {
+    const periodos = buildFlujoCajaPeriodos("2026-07-05", "2026-09-10", "mensual");
+    expect(periodos.map((p) => p.label)).toEqual(["Jul 2026", "Ago 2026", "Sep 2026"]);
+  });
+
+  it("los índices son consecutivos empezando en 0", () => {
+    const periodos = buildFlujoCajaPeriodos("2026-07-01", "2026-08-31", "quincenal");
+    expect(periodos.map((p) => p.index)).toEqual([0, 1, 2, 3]);
+  });
+});
+
+describe("flujoCajaSumaPct / flujoCajaTotalesPorPeriodo", () => {
+  it("suma los porcentajes de un ítem across períodos", () => {
+    expect(flujoCajaSumaPct({ 0: 30, 1: 70 })).toBe(100);
+    expect(flujoCajaSumaPct({ 0: 30 })).toBe(30);
+    expect(flujoCajaSumaPct(undefined)).toBe(0);
+  });
+
+  it("reparte el valor total del ítem según el % de cada período", () => {
+    const items = [{ id: "a", cantidad: 1, valorUnitario: 1000000, ivaPct: 0 }];
+    const periodos = buildFlujoCajaPeriodos("2026-07-01", "2026-07-31", "quincenal");
+    const porcentajes = { a: { 0: 40, 1: 60 } };
+    const result = flujoCajaTotalesPorPeriodo(items, porcentajes, periodos);
+    expect(result[0].total).toBe(400000);
+    expect(result[1].total).toBe(600000);
+  });
+
+  it("varios ítems se suman en el mismo período", () => {
+    const items = [
+      { id: "a", cantidad: 1, valorUnitario: 1000000, ivaPct: 0 },
+      { id: "b", cantidad: 1, valorUnitario: 500000, ivaPct: 0 },
+    ];
+    const periodos = buildFlujoCajaPeriodos("2026-07-01", "2026-07-31", "quincenal");
+    const porcentajes = { a: { 0: 100 }, b: { 0: 100 } };
+    const result = flujoCajaTotalesPorPeriodo(items, porcentajes, periodos);
+    expect(result[0].total).toBe(1500000);
+    expect(result[1].total).toBe(0);
   });
 });

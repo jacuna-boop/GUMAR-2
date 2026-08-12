@@ -28,6 +28,7 @@ import {
   upmeProgress, upmeActiveSteps, upmeNextStep, energizacionProgress, nextEnergizacionMilestone, energizacionFpoAlerta,
   classifyEnergizacionTipo, energizacionGroupsFor, energizacionDiasRefFor,
   presupuestoTotals, presupuestoListTotal, groupPresupuestoItems, calcPresupuestoItem, parsePresupuestoPaste,
+  buildFlujoCajaPeriodos, flujoCajaSumaPct, flujoCajaTotalesPorPeriodo,
   parseColombianNumber,
   ordenPagado, ordenProgramado, ordenSaldo, pagosTotals, pagosProximosAlertas, fmtMoney,
 } from "./lib/data.js";
@@ -2718,6 +2719,13 @@ function PresupuestoModule({ data, onChange, pagos, projectName }) {
         >
           Presupuesto de ejecución
         </button>
+        <button
+          className="view-toggle"
+          style={{ ...lightSubTabBtn, ...(activeSub === "flujoCaja" ? lightSubTabBtnActive : {}) }}
+          onClick={() => setActiveSub("flujoCaja")}
+        >
+          Flujo de caja
+        </button>
       </div>
 
       {activeSub === "ejecucion" && (
@@ -2729,7 +2737,7 @@ function PresupuestoModule({ data, onChange, pagos, projectName }) {
 
       {activeSub === "base" ? (
         <PresupuestoTable items={data.base} onAdd={addBaseItem} onAddMany={addBaseItems} onUpdate={updateBaseItem} onDelete={deleteBaseItem} pagadoPorItem={pagadoPorItem} projectName={projectName} />
-      ) : (
+      ) : activeSub === "ejecucion" ? (
         <PresupuestoTable
           items={data.ejecucion}
           onAdd={addEjecItem}
@@ -2741,6 +2749,169 @@ function PresupuestoModule({ data, onChange, pagos, projectName }) {
           baseValoresPorItem={baseValoresPorItem}
           baseValoresPorCategoria={baseValoresPorCategoria}
         />
+      ) : (
+        <FlujoCajaModule
+          items={data.base}
+          flujoCaja={data.flujoCaja}
+          onChange={(nextFlujoCaja) => onChange({ ...data, flujoCaja: nextFlujoCaja })}
+        />
+      )}
+    </div>
+  );
+}
+
+// Flujo de caja: distribuye el presupuesto BASE en % por período (quincenal o mensual), igual que
+// la hoja "FLUJO DE CAJA" del Excel de referencia (PP-F-02) — un % manual por ítem y período, el
+// valor en $ de cada celda sale de (valor total del ítem × ese %). Quincenal y mensual se guardan
+// aparte (ver emptyFlujoCajaState en data.js) para no perder lo digitado al cambiar de modo.
+function FlujoCajaModule({ items, flujoCaja, onChange }) {
+  const modo = flujoCaja.modo === "mensual" ? "mensual" : "quincenal";
+  const porcentajes = modo === "mensual" ? flujoCaja.porcentajesMensual : flujoCaja.porcentajesQuincenal;
+  const porcentajesKey = modo === "mensual" ? "porcentajesMensual" : "porcentajesQuincenal";
+  const periodos = buildFlujoCajaPeriodos(flujoCaja.fechaInicio, flujoCaja.fechaFin, modo);
+  const grouped = groupPresupuestoItems(items);
+  const totalesPorPeriodo = flujoCajaTotalesPorPeriodo(items, porcentajes, periodos);
+  const totalGeneral = totalesPorPeriodo.reduce((s, p) => s + p.total, 0);
+  const totalPresupuestoBase = presupuestoListTotal(items);
+
+  const setModo = (nextModo) => onChange({ ...flujoCaja, modo: nextModo });
+  const setFecha = (key, value) => onChange({ ...flujoCaja, [key]: value });
+  const updatePct = (itemId, periodoIndex, value) => {
+    const num = value === "" ? undefined : Math.max(0, Math.min(100, Number(value) || 0));
+    const itemPcts = { ...(porcentajes[itemId] || {}) };
+    if (num === undefined) delete itemPcts[periodoIndex];
+    else itemPcts[periodoIndex] = num;
+    onChange({ ...flujoCaja, [porcentajesKey]: { ...porcentajes, [itemId]: itemPcts } });
+  };
+
+  const lightTableWrap = { ...styles.cronoTableWrap, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTh = { ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightOvTd = { ...styles.ovTd, color: OVERVIEW_LIGHT.textPrimary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightMiniInput = { ...styles.miniInput, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary, border: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const lightSubTabBtn = { ...styles.presSubTabBtn, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, color: OVERVIEW_LIGHT.textSecondary, fontFamily: FONT_BRAND_BODY };
+  const lightSubTabBtnActive = { borderColor: BRAND_DARK, background: BRAND_DARK, color: "#FFFFFF" };
+  const pctInputStyle = { ...lightMiniInput, width: 52, padding: "4px 5px", fontSize: 11, textAlign: "center" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "flex-end", marginBottom: 14 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 11.5, color: OVERVIEW_LIGHT.textSecondary, fontFamily: FONT_BRAND_BODY }}>
+          <span>Fecha de inicio</span>
+          <input type="date" style={lightMiniInput} value={flujoCaja.fechaInicio} onChange={(e) => setFecha("fechaInicio", e.target.value)} />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 11.5, color: OVERVIEW_LIGHT.textSecondary, fontFamily: FONT_BRAND_BODY }}>
+          <span>Fecha de fin</span>
+          <input type="date" style={lightMiniInput} value={flujoCaja.fechaFin} onChange={(e) => setFecha("fechaFin", e.target.value)} />
+        </label>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button
+            style={{ ...lightSubTabBtn, ...(modo === "quincenal" ? lightSubTabBtnActive : {}) }}
+            onClick={() => setModo("quincenal")}
+          >
+            Quincenal
+          </button>
+          <button
+            style={{ ...lightSubTabBtn, ...(modo === "mensual" ? lightSubTabBtnActive : {}) }}
+            onClick={() => setModo("mensual")}
+          >
+            Mensual
+          </button>
+        </div>
+      </div>
+
+      {periodos.length === 0 ? (
+        <div style={{ color: OVERVIEW_LIGHT.textSecondary, fontSize: 13, padding: "10px 0" }}>
+          Define la fecha de inicio y fin del flujo de caja para ver los períodos.
+        </div>
+      ) : (
+        <>
+          <div style={{ ...lightTableWrap, overflowX: "auto" }}>
+            <table style={{ ...styles.overviewTable, minWidth: 480 + periodos.length * 60 }}>
+              <thead>
+                <tr>
+                  <th style={{ ...lightOvTh, position: "sticky", left: 0, background: OVERVIEW_LIGHT.card, minWidth: 260 }}>Ítem</th>
+                  {periodos.map((p) => (
+                    <th key={p.index} style={{ ...lightOvTh, textAlign: "center", minWidth: 60 }}>{p.label}</th>
+                  ))}
+                  <th style={{ ...lightOvTh, textAlign: "center", minWidth: 60 }}>% total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {grouped.map((group) => (
+                  <React.Fragment key={group.categoria}>
+                    <tr>
+                      <td
+                        colSpan={periodos.length + 2}
+                        style={{ ...styles.presGroupRow, position: "sticky", left: 0 }}
+                      >
+                        {group.categoria}
+                      </td>
+                    </tr>
+                    {group.items.map((it) => {
+                      const suma = flujoCajaSumaPct(porcentajes[it.id]);
+                      const ok = Math.abs(suma - 100) < 0.01;
+                      const vacio = suma === 0;
+                      return (
+                        <tr key={it.id}>
+                          <td style={{ ...lightOvTd, position: "sticky", left: 0, background: OVERVIEW_LIGHT.card, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 260 }}>
+                            {it.item ? `${it.item} · ` : ""}{it.descripcion}
+                          </td>
+                          {periodos.map((p) => (
+                            <td key={p.index} style={{ ...lightOvTd, textAlign: "center", padding: "4px 6px" }}>
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                style={pctInputStyle}
+                                value={porcentajes[it.id]?.[p.index] ?? ""}
+                                onChange={(e) => updatePct(it.id, p.index, e.target.value)}
+                              />
+                            </td>
+                          ))}
+                          <td style={{ ...lightOvTd, textAlign: "center", fontWeight: 700, color: vacio ? OVERVIEW_LIGHT.textSecondary : ok ? BRAND_DARK : "#E2604F" }}>
+                            {suma}%
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td style={{ ...lightOvTd, position: "sticky", left: 0, background: OVERVIEW_LIGHT.card, fontWeight: 700 }}>Total por período</td>
+                  {totalesPorPeriodo.map((p) => (
+                    <td key={p.index} style={{ ...lightOvTd, textAlign: "center", fontSize: 10, fontWeight: 700 }}>
+                      {p.total > 0 ? fmtMoney(p.total) : "—"}
+                    </td>
+                  ))}
+                  <td style={lightOvTd}></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div style={{ marginTop: 6, fontSize: 11.5, color: "#DCEAE4" }}>
+            Total distribuido: {fmtMoney(totalGeneral)} de {fmtMoney(totalPresupuestoBase)} del presupuesto base
+            {totalPresupuestoBase > 0 && Math.abs(totalGeneral - totalPresupuestoBase) > 1 && (
+              <span style={{ color: "#FFE8B3" }}> — quedan ítems sin distribuir al 100%.</span>
+            )}
+          </div>
+
+          {totalGeneral > 0 && (
+            <div style={{ ...lightTableWrap, marginTop: 14, padding: "16px 8px 4px" }}>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={totalesPorPeriodo.map((p) => ({ name: p.label, Total: p.total }))} margin={{ top: 10, right: 20, left: 10, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={OVERVIEW_LIGHT.border} />
+                  <XAxis dataKey="name" tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} />
+                  <YAxis tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1e6)}M`} />
+                  <Tooltip contentStyle={{ background: "#FFFFFF", border: `1px solid ${OVERVIEW_LIGHT.border}`, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }} formatter={(v) => fmtMoney(v)} />
+                  <Bar dataKey="Total" fill={BRAND_DARK} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
