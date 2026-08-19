@@ -1838,6 +1838,15 @@ function energizacionFpoFecha(ener) {
   return esMayor1mw ? (ener.fpoManual || null) : (ener.fechaInicio ? addMonths(ener.fechaInicio, 9) : null);
 }
 
+// Fecha de FPO SIN prórroga (6 meses desde "Día 0") — solo existe para proyectos ≤1MW; en >1MW no
+// aplica, porque fpoManual ya es una sola fecha digitada a mano, sin distinción base/con prórroga.
+// Se usa para marcar en la barra de FPO el punto donde se agota el plazo original.
+function energizacionFpoFechaSinExtension(ener) {
+  if (!ener) return null;
+  if (ener.tipo === "mayor1mw") return null;
+  return ener.fechaInicio ? addMonths(ener.fechaInicio, 6) : null;
+}
+
 // Alerta de FPO: avisa cuando faltan 30 días o menos, o si ya venció, y no avisa si el proyecto ya
 // quedó energizado al 100%.
 function energizacionFpoAlerta(ener, diasAviso = 30) {
@@ -1871,6 +1880,7 @@ export {
   energizacionTotalCostFor,
   energizacionDiasRefFor,
   energizacionFpoFecha,
+  energizacionFpoFechaSinExtension,
   PRESUPUESTO_BASE_TEMPLATE,
   buildPresupuestoBaseFromTemplate,
   CRONOGRAMA_BASE_TEMPLATE,

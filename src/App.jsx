@@ -25,7 +25,7 @@ import {
   fractionElapsed, cronogramaPesoTotal, buildCurvaSData,
   parseCronogramaPaste, cronogramaAvanceActual, matchCronogramaTasks, applyCronogramaMerge,
   parsePredecesoras, computeCronogramaSchedule, parseProjectDate,
-  upmeProgress, upmeActiveSteps, upmeNextStep, energizacionProgress, nextEnergizacionMilestone, energizacionFpoAlerta,
+  upmeProgress, upmeActiveSteps, upmeNextStep, energizacionProgress, nextEnergizacionMilestone, energizacionFpoAlerta, energizacionFpoFecha, energizacionFpoFechaSinExtension,
   classifyEnergizacionTipo, energizacionGroupsFor, energizacionDiasRefFor,
   presupuestoTotals, presupuestoListTotal, groupPresupuestoItems, calcPresupuestoItem, parsePresupuestoPaste,
   buildFlujoCajaPeriodos, flujoCajaSumaPct, flujoCajaTotalesPorPeriodo,
@@ -1278,6 +1278,22 @@ function Resumen({ data, setTab, onChangeInfo }) {
   const nextUpme = upmeNextStep(data.upme);
   const alerts = buildProjectAlerts(data);
 
+  // FPO (con prórroga, ver energizacionFpoFecha): línea de tiempo desde "Día 0" hasta la fecha de
+  // FPO — el % de la barra es cuánto de ese período ya transcurrió, no un avance de tareas.
+  const fpoFecha = energizacionFpoFecha(data.energizacion);
+  const fpoInicio = data.energizacion.fechaInicio;
+  const fpoDiasRestantes = fpoFecha ? daysBetween(todayISO(), fpoFecha) : null;
+  const fpoTotalDias = fpoFecha && fpoInicio ? daysBetween(fpoInicio, fpoFecha) : null;
+  const fpoTranscurridos = fpoInicio ? daysBetween(fpoInicio, todayISO()) : null;
+  const fpoPct = fpoTotalDias && fpoTotalDias > 0 ? Math.min(100, Math.max(0, Math.round((fpoTranscurridos / fpoTotalDias) * 100))) : 0;
+  const fpoColor = fpoDiasRestantes === null ? BRAND_DARK : fpoDiasRestantes < 0 ? "#E2604F" : fpoDiasRestantes <= 30 ? "#E8A33D" : BRAND_DARK;
+  const fpoLabel = fpoDiasRestantes === null ? "—" : fpoDiasRestantes < 0 ? `Vencida hace ${Math.abs(fpoDiasRestantes)}d` : `Faltan ${fpoDiasRestantes}d`;
+  // Marca en la barra dónde cae la FPO SIN prórroga (6 meses) — solo existe para proyectos ≤1MW.
+  const fpoBaseFecha = energizacionFpoFechaSinExtension(data.energizacion);
+  const fpoBaseMarkerPct = fpoBaseFecha && fpoInicio && fpoTotalDias > 0
+    ? Math.min(100, Math.max(0, (daysBetween(fpoInicio, fpoBaseFecha) / fpoTotalDias) * 100))
+    : null;
+
   // Piloto de tema claro extendido a Resumen (por proyecto) — mismo patrón que el resto: no se toca
   // `styles.card`/`cardHead`/`cardSub` (compartidos con TODA la app), overrides locales aquí.
   const lightCard = { ...styles.card, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
@@ -1329,6 +1345,29 @@ function Resumen({ data, setTab, onChangeInfo }) {
         <BigPct pct={enerPct} color={BRAND_DARK} trackColor="#E3E9E6" />
         <div style={lightCardSub}>
           {elapsed === null ? "Falta asignar fecha de inicio de trámites" : `Día ${elapsed} de 200`} · {nextMs ? `Siguiente: ${nextMs.title} (día ${nextMs.day})` : "Todas las actividades completadas"}
+        </div>
+      </div>
+
+      <div
+        style={{ ...lightCard, ...styles.cardClickable }}
+        role="button"
+        onClick={() => setTab?.("energizacion")}
+      >
+        <div style={lightCardHead}>
+          <Calendar size={16} color={fpoColor} />
+          <span>FPO (con prórroga)</span>
+        </div>
+        <BigPct
+          pct={fpoPct}
+          color={fpoColor}
+          label={fpoLabel}
+          trackColor="#E3E9E6"
+          markerPct={fpoBaseMarkerPct}
+          markerTitle={fpoBaseFecha ? `FPO sin prórroga: ${fmtDate(fpoBaseFecha)}` : undefined}
+        />
+        <div style={lightCardSub}>
+          {fpoFecha ? `Fecha: ${fmtDate(fpoFecha)}` : "Falta asignar fecha de inicio de energización"}
+          {fpoBaseFecha && <><br />Sin prórroga: {fmtDate(fpoBaseFecha)}</>}
         </div>
       </div>
 
@@ -1575,7 +1614,20 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
     const pres = presupuestoTotals(d.presupuesto);
     const pag = pagosTotals(d.pagos);
     const alerts = buildProjectAlerts(d);
-    return { project: p, loading: false, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag, alerts };
+    const fpoFecha = energizacionFpoFecha(d.energizacion); // ya incluye la prórroga (6+3 meses) para ≤1MW
+    const fpoInicio = d.energizacion.fechaInicio;
+    const fpoDiasRestantes = fpoFecha ? daysBetween(todayISO(), fpoFecha) : null;
+    const fpoTotalDias = fpoFecha && fpoInicio ? daysBetween(fpoInicio, fpoFecha) : null;
+    const fpoTranscurridos = fpoInicio ? daysBetween(fpoInicio, todayISO()) : null;
+    const fpoPct = fpoTotalDias && fpoTotalDias > 0 ? Math.min(100, Math.max(0, Math.round((fpoTranscurridos / fpoTotalDias) * 100))) : 0;
+    const fpoColor = fpoDiasRestantes === null ? BRAND_DARK : fpoDiasRestantes < 0 ? "#E2604F" : fpoDiasRestantes <= 30 ? "#B5790F" : BRAND_DARK;
+    const fpoLabel = fpoDiasRestantes === null ? "—" : fpoDiasRestantes < 0 ? `-${Math.abs(fpoDiasRestantes)}d` : `${fpoDiasRestantes}d`;
+    // Marca en la barra dónde cae la FPO SIN prórroga (6 meses) — solo existe para proyectos ≤1MW.
+    const fpoBaseFecha = energizacionFpoFechaSinExtension(d.energizacion);
+    const fpoBaseMarkerPct = fpoBaseFecha && fpoInicio && fpoTotalDias > 0
+      ? Math.min(100, Math.max(0, (daysBetween(fpoInicio, fpoBaseFecha) / fpoTotalDias) * 100))
+      : null;
+    return { project: p, loading: false, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag, alerts, fpoFecha, fpoPct, fpoColor, fpoLabel, fpoBaseFecha, fpoBaseMarkerPct };
   });
 
   const loaded = rows.filter((r) => !r.loading);
@@ -1670,6 +1722,7 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
           <thead>
             <tr>
               <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>Proyecto</th>
+              <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>FPO</th>
               <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>UPME</th>
               <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>Energización</th>
               <th style={{ ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` }}>Presupuesto</th>
@@ -1679,7 +1732,7 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ project: p, loading, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag }) => {
+            {rows.map(({ project: p, loading, upmePct, enerPct, nextMs, elapsed, delayed, pres, pag, fpoFecha, fpoPct, fpoColor, fpoLabel, fpoBaseFecha, fpoBaseMarkerPct }) => {
               const ovTdLight = { ...styles.ovTd, color: OVERVIEW_LIGHT.textPrimary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
               return (
                 <tr key={p.id} style={styles.ovRow} onClick={() => onOpenProject(p.id, "resumen")}>
@@ -1688,9 +1741,25 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
                     <div style={{ ...styles.ovTdMeta, color: OVERVIEW_LIGHT.textSecondary }}>{p.capacity ? `${p.capacity} MWp` : ""}{p.location ? ` · ${p.location}` : ""}</div>
                   </td>
                   {loading ? (
-                    <td colSpan={6} style={ovTdLight}>Cargando…</td>
+                    <td colSpan={7} style={ovTdLight}>Cargando…</td>
                   ) : (
                     <>
+                      <td
+                        style={ovTdLight}
+                        onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "energizacion"); }}
+                        title={fpoFecha ? `FPO: ${fmtDate(fpoFecha)}${fpoBaseFecha ? ` · sin prórroga: ${fmtDate(fpoBaseFecha)}` : ""}` : ""}
+                      >
+                        {fpoFecha ? (
+                          <OvBar
+                            pct={fpoPct}
+                            color={fpoColor}
+                            label={fpoLabel}
+                            trackColor={OVERVIEW_LIGHT.barTrack}
+                            markerPct={fpoBaseMarkerPct}
+                            markerTitle={fpoBaseFecha ? `FPO sin prórroga: ${fmtDate(fpoBaseFecha)}` : undefined}
+                          />
+                        ) : "—"}
+                      </td>
                       <td
                         style={ovTdLight}
                         onClick={(e) => { e.stopPropagation(); onOpenProject(p.id, "upme"); }}
@@ -1734,22 +1803,30 @@ function ResumenGeneral({ projects, projectData, onOpenProject }) {
   );
 }
 
-function OvBar({ pct, color, label, trackColor }) {
+// markerPct (opcional): pinta una línea vertical fija dentro de la barra en esa posición — se usa,
+// por ejemplo, para marcar dónde cae la FPO sin prórroga dentro de la barra de FPO con prórroga.
+function OvBar({ pct, color, label, trackColor, markerPct, markerTitle }) {
   return (
     <div style={styles.ovBarWrap}>
-      <div style={{ ...styles.ovBarTrack, ...(trackColor ? { background: trackColor } : {}) }}>
+      <div style={{ ...styles.ovBarTrack, ...(trackColor ? { background: trackColor } : {}), position: "relative" }}>
         <div style={{ ...styles.ovBarFill, width: `${pct}%`, background: color }} />
+        {markerPct != null && (
+          <div title={markerTitle} style={{ position: "absolute", top: 0, bottom: 0, left: `${Math.min(100, Math.max(0, markerPct))}%`, width: 2, background: "#22312D" }} />
+        )}
       </div>
       <span style={{ ...styles.ovBarPct, color }}>{label ?? `${pct}%`}</span>
     </div>
   );
 }
 
-function BigPct({ pct, color, label, trackColor }) {
+function BigPct({ pct, color, label, trackColor, markerPct, markerTitle }) {
   return (
     <div style={styles.bigPctWrap}>
-      <div style={{ ...styles.bigPctTrack, ...(trackColor ? { background: trackColor } : {}) }}>
+      <div style={{ ...styles.bigPctTrack, ...(trackColor ? { background: trackColor } : {}), position: "relative" }}>
         <div style={{ ...styles.bigPctFill, width: `${pct}%`, background: color }} />
+        {markerPct != null && (
+          <div title={markerTitle} style={{ position: "absolute", top: 0, bottom: 0, left: `${Math.min(100, Math.max(0, markerPct))}%`, width: 2, background: "#22312D" }} />
+        )}
       </div>
       <span style={{ ...styles.bigPctNum, color }}>{label ?? `${pct}%`}</span>
     </div>

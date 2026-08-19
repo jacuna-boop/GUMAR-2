@@ -16,6 +16,8 @@ import {
   ensureFullProjectData,
   emptyEnergizacionState,
   nextEnergizacionMilestone,
+  energizacionFpoFecha,
+  energizacionFpoFechaSinExtension,
   uid,
   buildFlujoCajaPeriodos,
   flujoCajaSumaPct,
@@ -326,6 +328,30 @@ describe("energización sin fecha de inicio no debe marcar atraso (regresión)",
     const ener = { ...emptyEnergizacionState(), fechaInicio: "2000-01-01" }; // muy en el pasado
     const next = nextEnergizacionMilestone(ener);
     expect(next.delayed).toBe(true);
+  });
+});
+
+describe("FPO con y sin prórroga", () => {
+  it("≤1MW: la FPO con prórroga es fechaInicio + 9 meses", () => {
+    const ener = { ...emptyEnergizacionState(), fechaInicio: "2026-01-15" };
+    expect(energizacionFpoFecha(ener)).toBe("2026-10-15");
+  });
+
+  it("≤1MW: la FPO sin prórroga es fechaInicio + 6 meses", () => {
+    const ener = { ...emptyEnergizacionState(), fechaInicio: "2026-01-15" };
+    expect(energizacionFpoFechaSinExtension(ener)).toBe("2026-07-15");
+  });
+
+  it(">1MW: la FPO sin prórroga no existe (fpoManual es una sola fecha)", () => {
+    const ener = { ...emptyEnergizacionState(), tipo: "mayor1mw", fpoManual: "2026-12-01" };
+    expect(energizacionFpoFecha(ener)).toBe("2026-12-01");
+    expect(energizacionFpoFechaSinExtension(ener)).toBeNull();
+  });
+
+  it("sin fecha de inicio, ninguna de las dos se calcula", () => {
+    const ener = emptyEnergizacionState();
+    expect(energizacionFpoFecha(ener)).toBeNull();
+    expect(energizacionFpoFechaSinExtension(ener)).toBeNull();
   });
 });
 
