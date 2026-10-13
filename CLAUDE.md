@@ -117,6 +117,15 @@ alter table project_data add column if not exists pagos jsonb not null default '
   La UI del cliente lee `profiles.role` al iniciar sesión (`Dashboard` en `App.jsx`) y oculta/
   deshabilita controles según el rol, pero **la restricción real la hacen las políticas RLS** — la UI
   es solo para no confundir a quien no debería editar.
+- **Permisos por módulo en la base de datos** (`supabase/seguridad_permisos.sql`): el trigger
+  `enforce_module_permissions` rechaza (errcode 42501) guardar un módulo sin la casilla del cargo
+  correspondiente; `info` exige `puede_editar_algo()`. En Pagos, aprobar/desaprobar/borrar/cambiar el
+  valor de un pago aprobado exige `puede_aprobar_pagos` y `aprobadoPor` debe ser el nombre o correo de
+  quien está conectado. Admin y SQL Editor (sin `auth.uid()`) no se restringen. Si agregas un módulo
+  nuevo, agrégalo también a ese trigger. `useProjectSync` muestra el mensaje del servidor y no
+  reintenta en errores 42501.
+- **Excel**: se lee con `exceljs` (`src/lib/excelRead.js`); la librería `xlsx` se quitó por
+  vulnerabilidades sin parche.
 
 ## Historial de decisiones de producto (por si preguntan "por qué está así")
 

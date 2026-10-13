@@ -6,7 +6,7 @@ import {
   Landmark, Search, Settings,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend as RLegend, ResponsiveContainer, BarChart, Bar, AreaChart, Area } from "recharts";
-import * as XLSX from "xlsx";
+import { readSheetRows, excelSerialToISO } from "./lib/excelRead.js";
 import ExcelJS from "exceljs";
 import { supabase } from "./lib/supabaseClient";
 import { COLOMBIA_LOCATIONS } from "./lib/colombiaLocations";
@@ -72,8 +72,8 @@ function Dashboard({ session }) {
   const [loading, setLoading] = useState(true);
   const {
     projectData, getProjectData, loadErrors, loadProjectData, updateProjectData,
-    saveStatus, lastSaved, versioned, conflict, resolveConflict,
-    flushAll, retryNow, hasUnsaved, setProjectRow, forgetProject, forgetAll,
+    saveStatus, saveErrorMessage, lastSaved, versioned, conflict, resolveConflict,
+    flushAll, retryNow, hasUnsaved, setProjectRow, forgetProject, forgetAll, discardAndReload,
   } = useProjectSync(user);
   const [showAddProject, setShowAddProject] = useState(false);
   const [saveError, setSaveError] = useState(false); // errores de acciones puntuales (crear, importar…)
@@ -102,6 +102,8 @@ function Dashboard({ session }) {
   const hasPerm = useCallback((key) => isAdmin || (!isLector && !!cargoPerms?.[key]), [isAdmin, isLector, cargoPerms]);
   const canDeleteProjects = hasPerm("puede_eliminar_proyectos");
   const canManageUsers = hasPerm("puede_gestionar_usuarios");
+  // Información del proyecto (Resumen): quien pueda editar algún módulo — igual que en la base de datos.
+  const canEditInfo = Object.values(TAB_PERM_KEY).some((k) => hasPerm(k));
 
   useEffect(() => {
     const onAfterPrint = () => { setPrintTarget(null); setPagosExportRange(null); setInformePPI01Ids(null); };
@@ -415,6 +417,7 @@ function Dashboard({ session }) {
                     data={data}
                     setTab={setTab}
                     onChangeInfo={(nextInfo) => updateProjectData(selectedId, (cur) => ({ ...cur, info: nextInfo }))}
+                    infoReadOnly={!canEditInfo}
                   />
                 ) : tab === "upme" ? (
                   <UpmeModule
@@ -558,7 +561,7 @@ function Dashboard({ session }) {
         <ProjectMembersModal project={managingMembers} onClose={() => setManagingMembers(null)} />
       )}
       {showCargosModal && (
-        <CargosModal onClose={() => setShowCargosModal(false)} />
+        <CargosModal myUserId={user.id} onClose={() => setShowCargosModal(false)} />
       )}
       {showEditNameModal && (
         <EditNameModal
@@ -590,10 +593,21 @@ function Dashboard({ session }) {
       )}
       {saveStatus === "error" && (
         <div className="no-print" style={{ ...styles.saveError, bottom: saveError ? 80 : 20 }}>
-          No se pudieron guardar tus últimos cambios. Siguen en esta pantalla y se reintenta solo; no cierres la pestaña.
-          <button onClick={saveNow} style={{ ...styles.saveErrorClose, textDecoration: "underline", whiteSpace: "nowrap" }}>
-            Reintentar
-          </button>
+          {saveErrorMessage ? (
+            <>
+              No se guardó: {saveErrorMessage}
+              <button onClick={discardAndReload} style={{ ...styles.saveErrorClose, textDecoration: "underline", whiteSpace: "nowrap" }}>
+                Descartar y recargar
+              </button>
+            </>
+          ) : (
+            <>
+              No se pudieron guardar tus últimos cambios. Siguen en esta pantalla y se reintenta solo; no cierres la pestaña.
+              <button onClick={saveNow} style={{ ...styles.saveErrorClose, textDecoration: "underline", whiteSpace: "nowrap" }}>
+                Reintentar
+              </button>
+            </>
+          )}
         </div>
       )}
       {versioned === false && isAdmin && !hideMigrationHint && (
@@ -1175,7 +1189,7 @@ function buildProjectAlerts(data) {
   return alerts;
 }
 
-function Resumen({ data, setTab, onChangeInfo }) {
+function Resumen({ data, setTab, onChangeInfo, infoReadOnly = false }) {
   const upmePct = upmeProgress(data.upme);
   const enerPct = energizacionProgress(data.energizacion);
   const nextMs = nextEnergizacionMilestone(data.energizacion);
@@ -1333,7 +1347,11 @@ function Resumen({ data, setTab, onChangeInfo }) {
         )}
       </div>
 
-      {onChangeInfo && <ProyectoInfoSection info={data.info} pagos={data.pagos} onChange={onChangeInfo} />}
+      {onChangeInfo && (
+        <div className={infoReadOnly ? "readonly-gate" : undefined}>
+          <ProyectoInfoSection info={data.info} pagos={data.pagos} onChange={onChangeInfo} />
+        </div>
+      )}
     </div>
     </div>
   );
@@ -3514,11 +3532,8 @@ async function downloadPresupuestoTemplate(items, projectName) {
 // Lee el .xlsx de presupuesto que suba la persona: detecta filas de categoría (Cantidad/Unidad/
 // Valor unitario vacíos) igual que "Pegar desde Excel", pero leyendo el archivo directo — evita
 // los problemas de copiar/pegar (columnas ocultas, autofiltro, formato del portapapeles).
-function parsePresupuestoWorkbook(arrayBuffer) {
-  const wb = XLSX.read(arrayBuffer, { cellDates: false });
-  const sheetName = wb.SheetNames.includes("Presupuesto") ? "Presupuesto" : wb.SheetNames[wb.SheetNames.length - 1];
-  const ws = wb.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+async function parsePresupuestoWorkbook(arrayBuffer) {
+  const rows = await readSheetRows(arrayBuffer, "Presupuesto");
   const items = [];
   let currentCategoria = "Sin categoría";
   let skipped = 0;
@@ -3551,9 +3566,7 @@ function normalizeExcelDate(val) {
   if (!val) return "";
   if (val instanceof Date) return val.toISOString().slice(0, 10);
   if (typeof val === "number") {
-    const d = XLSX.SSF.parse_date_code(val);
-    if (!d) return "";
-    return `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+    return excelSerialToISO(val);
   }
   const asProject = parseProjectDate(String(val));
   if (asProject) return asProject;
@@ -3563,13 +3576,9 @@ function normalizeExcelDate(val) {
 
 // Lee el archivo .xlsx que suba la persona y arma la lista de órdenes+pagos (agrupa filas por
 // "Número de orden" — varias filas con el mismo número son varios pagos de la misma orden).
-function parsePagosWorkbook(arrayBuffer) {
-  const wb = XLSX.read(arrayBuffer, { cellDates: true });
-  // La plantilla trae la hoja "Instrucciones" primero y "Pagos" después — hay que buscarla por
-  // nombre, no asumir que es la primera hoja del archivo.
-  const sheetName = wb.SheetNames.includes("Pagos") ? "Pagos" : wb.SheetNames[wb.SheetNames.length - 1];
-  const ws = wb.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+async function parsePagosWorkbook(arrayBuffer) {
+  // La plantilla trae la hoja "Instrucciones" primero y "Pagos" después — se busca por nombre.
+  const rows = await readSheetRows(arrayBuffer, "Pagos");
   const ordenesMap = new Map();
   let skipped = 0;
   rows.forEach((r) => {
@@ -3650,7 +3659,13 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
     onChange({ ...data, ordenes: data.ordenes.map((o) => (o.id === id ? { ...o, ...patch } : o)) });
   };
   const deleteOrden = (id) => onChange({ ...data, ordenes: data.ordenes.filter((o) => o.id !== id) });
-  const askDeleteOrden = (o) => setConfirmDelete({ kind: "orden", ordenId: o.id, label: o.numero || "esta orden" });
+  // Los pagos aprobados solo los puede borrar o cambiar de valor quien puede aprobar (la base de
+  // datos también lo impone — ver supabase/seguridad_permisos.sql).
+  const BLOQUEO_APROBADO = "Este pago ya está aprobado. Solo quien tiene permiso de aprobar pagos puede borrarlo o cambiar su valor.";
+  const askDeleteOrden = (o) => {
+    if (!canAprobarPagos && o.pagos.some((p) => p.aprobado)) { window.alert("Esta orden tiene pagos aprobados. Solo quien tiene permiso de aprobar pagos puede borrarla."); return; }
+    setConfirmDelete({ kind: "orden", ordenId: o.id, label: o.numero || "esta orden" });
+  };
 
   // Una orden se puede repartir entre varios ítems del presupuesto: cada link guarda cuánto de esa
   // orden le corresponde a ese ítem (ver costoRealPorItemMap en data.js, que suma esto por ítem).
@@ -3695,8 +3710,10 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
       ordenes: data.ordenes.map((o) => (o.id === ordenId ? { ...o, pagos: o.pagos.filter((p) => p.id !== pagoId) } : o)),
     });
   };
-  const askDeletePago = (ordenId, p) =>
+  const askDeletePago = (ordenId, p) => {
+    if (!canAprobarPagos && p.aprobado) { window.alert(BLOQUEO_APROBADO); return; }
     setConfirmDelete({ kind: "pago", ordenId, pagoId: p.id, label: p.concepto ? `${fmtMoney(p.valor)} (${p.concepto})` : fmtMoney(p.valor) });
+  };
 
   const runConfirmedDelete = () => {
     if (!confirmDelete) return;
@@ -3708,7 +3725,14 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
     onChange({
       ...data,
       ordenes: data.ordenes.map((o) =>
-        o.id === ordenId ? { ...o, pagos: o.pagos.map((p) => (p.id === pagoId ? { ...p, ...patch } : p)) } : o
+        o.id === ordenId ? { ...o, pagos: o.pagos.map((p) => {
+          if (p.id !== pagoId) return p;
+          // Cambiar el valor de un pago aprobado le quita la aprobación: hay que volver a aprobarlo.
+          if (p.aprobado && "valor" in patch && patch.valor !== p.valor) {
+            return { ...p, ...patch, aprobado: false, aprobadoPor: null, aprobadoEn: null };
+          }
+          return { ...p, ...patch };
+        }) } : o
       ),
     });
   };
@@ -3978,6 +4002,8 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                                         type="number"
                                         style={lightMiniInput}
                                         value={p.valor}
+                                        disabled={!!p.aprobado && !canAprobarPagos}
+                                        title={p.aprobado ? (canAprobarPagos ? "Si cambias el valor, el pago pierde la aprobación" : BLOQUEO_APROBADO) : undefined}
                                         onChange={(e) => updatePago(o.id, p.id, { valor: Number(e.target.value) || 0 })}
                                       />
                                     </td>
@@ -4392,7 +4418,7 @@ function PresupuestoTemplateModal({ onClose, onImport }) {
     setPreview(null);
     try {
       const buf = await file.arrayBuffer();
-      const { items, skipped } = parsePresupuestoWorkbook(buf);
+      const { items, skipped } = await parsePresupuestoWorkbook(buf);
       const categorias = Array.from(new Set(items.map((it) => it.categoria)));
       setPreview({ items, skipped, categorias });
     } catch (err) {
@@ -4459,7 +4485,7 @@ function PagosTemplateModal({ onClose, onImport }) {
     setPreview(null);
     try {
       const buf = await file.arrayBuffer();
-      const { ordenes, skipped } = parsePagosWorkbook(buf);
+      const { ordenes, skipped } = await parsePagosWorkbook(buf);
       const totalPagos = ordenes.reduce((s, o) => s + o.pagos.length, 0);
       setPreview({ ordenes, skipped, totalPagos });
     } catch (err) {
@@ -4975,7 +5001,7 @@ const CARGO_PERMISO_GROUPS = [
 // tiene ningún permiso hasta que se cree un cargo y se le asigne. El admin también puede elegirse
 // un cargo — no le cambia ningún permiso (admin siempre puede todo), es solo la etiqueta que se usa
 // en "Cargo del responsable" al exportar el informe PP-I-01.
-function CargosModal({ onClose }) {
+function CargosModal({ myUserId, onClose }) {
   const [cargos, setCargos] = useState(null); // null = cargando
   const [profiles, setProfiles] = useState([]);
   const [newCargoName, setNewCargoName] = useState("");
@@ -5010,14 +5036,16 @@ function CargosModal({ onClose }) {
     setBusy(true);
     setError("");
     setCargos((prev) => prev.map((c) => (c.id === cargo.id ? { ...c, [key]: value } : c)));
-    const { error: err } = await supabase.from("cargos").update({ [key]: value }).eq("id", cargo.id);
+    const { data: updated, error: err } = await supabase.from("cargos").update({ [key]: value }).eq("id", cargo.id).select("id");
     if (err) { setError("No se pudo guardar el cambio. Intenta de nuevo."); await load(); }
+    else if (!updated?.length) { setError("No puedes cambiar las casillas de tu propio cargo (solo un admin puede)."); await load(); }
     setBusy(false);
   };
 
   const deleteCargo = async (id) => {
     setBusy(true);
-    await supabase.from("cargos").delete().eq("id", id);
+    const { data: deleted, error: err } = await supabase.from("cargos").delete().eq("id", id).select("id");
+    if (err || !deleted?.length) setError("No se pudo eliminar el cargo (no puedes eliminar el tuyo propio).");
     await load();
     setBusy(false);
   };
@@ -5027,7 +5055,7 @@ function CargosModal({ onClose }) {
     setError("");
     setProfiles((prev) => prev.map((p) => (p.id === profileId ? { ...p, cargo_id: cargoId || null } : p)));
     const { error: err } = await supabase.from("profiles").update({ cargo_id: cargoId || null }).eq("id", profileId);
-    if (err) { setError("No se pudo asignar el cargo. Intenta de nuevo."); await load(); }
+    if (err) { setError(profileId === myUserId ? "No puedes cambiar tu propio cargo (solo un admin puede)." : "No se pudo asignar el cargo. Intenta de nuevo."); await load(); }
     setBusy(false);
   };
 

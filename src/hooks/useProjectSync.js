@@ -24,6 +24,7 @@ export function useProjectSync(user) {
   const [loadErrors, setLoadErrors] = useState({});
   const [saveStatus, setSaveStatus] = useState("saved"); // saving | saved | error | conflict
   const [lastSaved, setLastSaved] = useState(null);
+  const [saveErrorMessage, setSaveErrorMessage] = useState(null); // motivo cuando la base de datos rechaza por permisos
   const [conflict, setConflict] = useState(null); // { projectId, modules, serverRow }
   const conflictRef = useRef(null);
   const [versioned, setVersioned] = useState(null); // null = aún no se sabe
@@ -142,6 +143,7 @@ export function useProjectSync(user) {
 
       if (result.ok) {
         failures.current[id] = 0;
+        setSaveErrorMessage(null);
         if (result.versions) {
           // Solo los módulos que guardamos: los demás pueden tener cambios de otros que aún no trajimos.
           const saved = rowVersions({ module_versions: result.versions });
@@ -158,8 +160,14 @@ export function useProjectSync(user) {
           setConflict(conflictRef.current);
         } else {
           console.error("Error guardando project_data:", result.error?.message || result.error);
-          failures.current[id] = (failures.current[id] || 0) + 1;
-          scheduleFlushRef.current(id, retryDelayMs(failures.current[id]));
+          if (result.error?.code === "42501") {
+            // Sin permiso (lo decide la base de datos): reintentar no sirve, solo avisar por qué.
+            failures.current[id] = FAILURES_BEFORE_ERROR;
+            setSaveErrorMessage(result.error.message);
+          } else {
+            failures.current[id] = (failures.current[id] || 0) + 1;
+            scheduleFlushRef.current(id, retryDelayMs(failures.current[id]));
+          }
         }
       }
       if (!paused.current[id] && dirty.current[id]?.size && !timers.current[id]) scheduleFlushRef.current(id);
@@ -328,6 +336,20 @@ export function useProjectSync(user) {
 
   const getProjectData = useCallback(() => dataRef.current, []);
 
+  // Descarta lo que no se pudo guardar y vuelve a leer el proyecto del servidor.
+  const discardAndReload = useCallback(async () => {
+    const ids = Object.keys(dirty.current).filter((id) => dirty.current[id]?.size && !paused.current[id]);
+    ids.forEach((id) => {
+      clearTimeout(timers.current[id]);
+      delete timers.current[id];
+      dirty.current[id] = new Set();
+      failures.current[id] = 0;
+    });
+    setSaveErrorMessage(null);
+    await Promise.all(ids.map((id) => loadProjectData(id, { force: true })));
+    refreshStatus();
+  }, [loadProjectData, refreshStatus]);
+
   // Salir de la página con cambios sin guardar: avisar, e intentar guardar al ocultar la pestaña
   // (en "beforeunload" ya no da tiempo de terminar una petición normal).
   useEffect(() => {
@@ -351,7 +373,7 @@ export function useProjectSync(user) {
 
   return {
     projectData, getProjectData, loadErrors, loadProjectData, updateProjectData,
-    saveStatus, lastSaved, versioned, conflict, resolveConflict,
-    flushAll, retryNow, hasUnsaved, setProjectRow, forgetProject, forgetAll,
+    saveStatus, saveErrorMessage, lastSaved, versioned, conflict, resolveConflict,
+    flushAll, retryNow, hasUnsaved, setProjectRow, forgetProject, forgetAll, discardAndReload,
   };
 }
