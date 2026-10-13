@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { CAT_STYLE, addMonths, buildEnergizacionCurvaSData, daysBetween, energizacionDiasRefFor, energizacionFpoAlerta, energizacionGroupsFor, energizacionProgress, fmtDate, todayISO } from "../lib/data.js";
 import { AlertTriangle, CheckCircle2, Circle, Zap } from "lucide-react";
 import { CartesianGrid, Legend as RLegend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -5,6 +6,10 @@ import { styles } from "../styles.js";
 import { BRAND_DARK, FONT_BRAND_BODY, FONT_BRAND_DISPLAY, OVERVIEW_LIGHT } from "../theme.js";
 import { Legend } from "../components/common.jsx";
 import { AttachmentsButton } from "../components/AttachmentsButton.jsx";
+
+// Fecha local (aaaa-mm-dd) de un Date.
+const toISODate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+import { ejeTiempoProps, fechaLargaTs } from "../lib/fechasGrafica.js";
 
 /* ---------------------------------------------------------------------
    Energización module
@@ -20,15 +25,31 @@ export function EnergizacionModule({ data, onChange, projectId, isLector }) {
   const curvaSData = buildEnergizacionCurvaSData(data);
   let cursor = 0;
 
-  const toggleDone = (idx) => {
-    const next = data.milestones.map((m, i) =>
-      i === idx ? { ...m, done: !m.done, fecha: !m.done ? todayISO() : "" } : m
-    );
-    onChange({ ...data, milestones: next });
+  // Marcar un hito como hecho pregunta primero la fecha real (antes se ponía "hoy" sin avisar, y los
+  // hitos marcados tarde quedaban con una fecha falsa que deformaba la curva de avance real).
+  // Desmarcarlo sí es inmediato y borra la fecha.
+  const [hitoPorMarcar, setHitoPorMarcar] = useState(null); // { idx, titulo, fechaEsperada, fecha } | null
+  const toggleDone = (idx, titulo, day) => {
+    if (data.milestones[idx]?.done) {
+      onChange({ ...data, milestones: data.milestones.map((m, i) => (i === idx ? { ...m, done: false, fecha: "" } : m)) });
+      return;
+    }
+    let fechaEsperada = "";
+    if (data.fechaInicio) {
+      const d = new Date(data.fechaInicio + "T00:00:00");
+      d.setDate(d.getDate() + day);
+      fechaEsperada = toISODate(d);
+    }
+    setHitoPorMarcar({ idx, titulo, fechaEsperada, fecha: todayISO() });
+  };
+  const confirmarHito = () => {
+    const { idx, fecha } = hitoPorMarcar;
+    onChange({ ...data, milestones: data.milestones.map((m, i) => (i === idx ? { ...m, done: true, fecha } : m)) });
+    setHitoPorMarcar(null);
   };
 
-  // Marcar un hito como hecho lo llena con hoy por defecto, pero la fecha real de ejecución puede
-  // ser otro día — se puede corregir a mano después.
+  // La fecha real de un hito ya marcado se puede corregir después, directo en su fila
+  // (por ejemplo, hitos que se marcaron tarde).
   const updateMilestoneFecha = (idx, fecha) => {
     const next = data.milestones.map((m, i) => (i === idx ? { ...m, fecha } : m));
     onChange({ ...data, milestones: next });
@@ -105,9 +126,9 @@ export function EnergizacionModule({ data, onChange, projectId, isLector }) {
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={curvaSData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={OVERVIEW_LIGHT.border} />
-              <XAxis dataKey="label" tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} />
+              <XAxis {...ejeTiempoProps(curvaSData)} tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} />
               <YAxis domain={[0, 100]} tick={{ fill: OVERVIEW_LIGHT.textSecondary, fontSize: 10 }} unit="%" />
-              <Tooltip contentStyle={{ background: "#FFFFFF", border: `1px solid ${OVERVIEW_LIGHT.border}`, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }} />
+              <Tooltip labelFormatter={fechaLargaTs} formatter={(v) => `${v}%`} contentStyle={{ background: "#FFFFFF", border: `1px solid ${OVERVIEW_LIGHT.border}`, fontSize: 12, color: OVERVIEW_LIGHT.textPrimary }} />
               <RLegend wrapperStyle={{ fontSize: 12 }} />
               <Line type="monotone" dataKey="base" name="Línea base" stroke={BRAND_DARK} strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="real" name="Avance real" stroke="#F5B942" strokeWidth={2} dot={{ r: 3 }} />
@@ -160,7 +181,7 @@ export function EnergizacionModule({ data, onChange, projectId, isLector }) {
                   >
                     <button
                       style={styles.wbsCheck}
-                      onClick={() => toggleDone(i)}
+                      onClick={() => toggleDone(i, it.title, it.day)}
                       aria-label={state.done ? "Marcar como pendiente" : "Marcar como completado"}
                     >
                       {state.done ? (
@@ -196,6 +217,46 @@ export function EnergizacionModule({ data, onChange, projectId, isLector }) {
           </div>
         );
       })}
+
+      {hitoPorMarcar && (
+        <div style={styles.modalOverlay} onClick={() => setHitoPorMarcar(null)}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHead}>
+              <h3 style={styles.h3}>¿Cuándo se cumplió?</h3>
+            </div>
+            <p style={styles.confirmMsg}>
+              <strong>{hitoPorMarcar.titulo}</strong>
+              <br />
+              Elige la fecha real en que se completó. Esta fecha es la que dibuja la curva de avance real.
+            </p>
+            <input
+              type="date"
+              autoFocus
+              value={hitoPorMarcar.fecha}
+              onChange={(e) => setHitoPorMarcar({ ...hitoPorMarcar, fecha: e.target.value })}
+              style={{ ...lightInput, width: "100%", marginBottom: 8 }}
+            />
+            <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+              <button style={styles.exportOptionBtn} onClick={() => setHitoPorMarcar({ ...hitoPorMarcar, fecha: todayISO() })}>Hoy</button>
+              {hitoPorMarcar.fechaEsperada && (
+                <button style={styles.exportOptionBtn} onClick={() => setHitoPorMarcar({ ...hitoPorMarcar, fecha: hitoPorMarcar.fechaEsperada })}>
+                  Fecha esperada ({fmtDate(hitoPorMarcar.fechaEsperada)})
+                </button>
+              )}
+            </div>
+            <div style={styles.confirmBtnRow}>
+              <button style={styles.confirmCancelBtn} onClick={() => setHitoPorMarcar(null)}>Cancelar</button>
+              <button
+                style={{ ...styles.addProjectBtn, opacity: hitoPorMarcar.fecha ? 1 : 0.5 }}
+                disabled={!hitoPorMarcar.fecha}
+                onClick={confirmarHito}
+              >
+                Marcar como cumplido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
