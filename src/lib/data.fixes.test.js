@@ -122,3 +122,50 @@ describe("curva S de energización", () => {
     expect(c.find((p) => p.date === "2026-04-20").real).toBeGreaterThan(0);
   });
 });
+
+describe("CNO 2233 en energización (≤1MW)", () => {
+  it("los proyectos sin norma siguen en CNO 2121 y los nuevos arrancan en CNO 2233", async () => {
+    const d = await import("./data.js");
+    const viejo = d.ensureFullProjectData({ energizacion: { fechaInicio: "", milestones: Array.from({ length: 73 }, () => ({ done: false, fecha: "" })) } }).energizacion;
+    expect(d.energizacionMilestonesFor(viejo)).toHaveLength(73);
+    expect(d.energizacionTotalCostFor(viejo)).toBe(655);
+    const nuevo = d.emptyEnergizacionState("menor1mw");
+    expect(nuevo.norma).toBe("2233");
+    expect(nuevo.milestones).toHaveLength(75);
+    expect(d.energizacionTotalCostFor(nuevo)).toBe(665);
+    expect(d.emptyEnergizacionState("mayor1mw").norma).toBeUndefined();
+  });
+
+  it("renumera las cartas como CNO 2233 y agrega la 9.7 de ecuación de demanda", async () => {
+    const d = await import("./data.js");
+    const labels = d.energizacionGroupsFor({ norma: "2233" }).map((g) => g.label);
+    expect(labels).toContain("Carta 9.7 · Ecuación de demanda y factores");
+    expect(labels).toContain("Carta 9.8 · Certificado de conexión");
+    expect(labels).toContain("Carta 9.9 · Declaración del programa de generación");
+    expect(labels).toContain("Carta 9.11 · Cumplimiento de reglamentación vigente");
+    expect(labels).toContain("Carta 9.12 · Declaración entrada en operación");
+    const titulos = d.energizacionMilestonesFor({ norma: "2233" }).map((m) => m.title).join(" | ");
+    expect(titulos).not.toMatch(/\b9\.10\b/);
+    expect(titulos).toMatch(/Carta 9\.1 al OR/); // la 9.1 no se toca
+  });
+
+  it("cambiar de norma conserva lo marcado (por título) y volver deja todo igual", async () => {
+    const d = await import("./data.js");
+    const base = d.ensureFullProjectData({ energizacion: { fechaInicio: "2026-04-13", milestones: Array.from({ length: 73 }, () => ({ done: false, fecha: "" })) } }).energizacion;
+    const titulos2121 = d.energizacionMilestonesFor(base).map((m) => m.title);
+    const marcados = ["Aprobación Carta 9.6", "Aprobación Carta 9.3 por XM", "Descargo energización del proyecto"];
+    base.milestones = base.milestones.map((m, i) => (marcados.includes(titulos2121[i]) ? { done: true, fecha: `2026-05-0${i % 9 + 1}` } : m));
+    const a2233 = d.cambiarNormaEnergizacion(base, "2233");
+    const titulos2233 = d.energizacionMilestonesFor(a2233).map((m) => m.title);
+    expect(a2233.milestones).toHaveLength(75);
+    marcados.forEach((t) => {
+      expect(a2233.milestones[titulos2233.indexOf(t)]).toEqual(base.milestones[titulos2121.indexOf(t)]);
+    });
+    expect(a2233.milestones.filter((m) => m.done)).toHaveLength(3);
+    expect(d.hitosCno2233Marcados(a2233)).toBe(0);
+    expect(d.energizacionTotalCostFor(a2233)).toBeGreaterThan(d.energizacionTotalCostFor(base)); // más trabajo pendiente
+    const deVuelta = d.cambiarNormaEnergizacion(a2233, "2121");
+    expect(deVuelta.milestones).toEqual(base.milestones);
+    expect(d.cambiarNormaEnergizacion(a2233, "2233")).toBe(a2233); // misma norma: no cambia nada
+  });
+});

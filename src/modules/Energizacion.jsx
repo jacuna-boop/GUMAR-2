@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CAT_STYLE, addMonths, buildEnergizacionCurvaSData, daysBetween, energizacionDiasRefFor, energizacionFpoAlerta, energizacionGroupsFor, energizacionProgress, fmtDate, todayISO } from "../lib/data.js";
+import { CAT_STYLE, addMonths, buildEnergizacionCurvaSData, cambiarNormaEnergizacion, hitosCno2233Marcados, daysBetween, energizacionDiasRefFor, energizacionFpoAlerta, energizacionGroupsFor, energizacionProgress, fmtDate, todayISO } from "../lib/data.js";
 import { AlertTriangle, CheckCircle2, Circle, Zap } from "lucide-react";
 import { CartesianGrid, Legend as RLegend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { styles } from "../styles.js";
@@ -55,6 +55,13 @@ export function EnergizacionModule({ data, onChange, projectId, isLector }) {
     onChange({ ...data, milestones: next });
   };
 
+  // Cambiar de norma conserva todo lo marcado; solo volver a 2121 borra lo de la Carta 9.7 nueva.
+  const cambiarNorma = (norma) => {
+    if (norma === "2121" && hitosCno2233Marcados(data) > 0
+      && !window.confirm("Volver a CNO 2121 quita la Carta 9.7 (Ecuación de demanda y factores), que ya tiene pasos marcados. ¿Continuar?")) return;
+    onChange(cambiarNormaEnergizacion(data, norma));
+  };
+
   const overallPct = energizacionProgress(data);
 
   // Piloto de tema claro extendido a Energización — mismo patrón que UPME: los estilos exclusivos
@@ -80,6 +87,15 @@ export function EnergizacionModule({ data, onChange, projectId, isLector }) {
             style={lightInput}
           />
         </label>
+        {!esMayor1mw && (
+          <label style={lightDateField} title="CNO 2233 agrega la Carta 9.7 (Ecuación de demanda y factores) y corre la numeración de las siguientes">
+            <span>Norma CNO</span>
+            <select value={data.norma === "2233" ? "2233" : "2121"} onChange={(e) => cambiarNorma(e.target.value)} style={lightInput} disabled={isLector}>
+              <option value="2121">CNO 2121</option>
+              <option value="2233">CNO 2233</option>
+            </select>
+          </label>
+        )}
         <div style={styles.dayCounter}>
           {elapsed === null ? "Asigna la fecha de inicio para empezar a contar días" : (<>Día <strong>{elapsed}</strong> de {diasRef}</>)}
         </div>

@@ -143,6 +143,30 @@ const ENERGIZACION_MILESTONES = ENERGIZACION_GROUPS.flatMap((g) =>
 );
 const ENERGIZACION_TOTAL_COST = ENERGIZACION_MILESTONES.reduce((s, m) => s + m.cost, 0);
 
+// CNO 2233 (generación distribuida ≤1MW; reemplaza a CNO 2121 para los proyectos nuevos y los que se
+// cambien con el selector "Norma CNO"): agrega la Carta 9.7 "Ecuación de demanda y factores" y corre la
+// numeración de las siguientes — 9.7→9.8, 9.8→9.9, 9.9→9.11, 9.10→9.12 (en CNO 2233 no hay 9.10).
+// Los proyectos sin "norma" guardada siguen en CNO 2121.
+const CNO_2233_RENUMERA = { 7: 8, 8: 9, 9: 11, 10: 12 };
+const renumeraCno2233 = (s) => s.replace(/\b9\.(\d+)\b/g, (m, n) => (CNO_2233_RENUMERA[n] ? `9.${CNO_2233_RENUMERA[n]}` : m));
+const CARTA_97_CNO_2233 = { id: "c97_cno2233", label: "Carta 9.7 · Ecuación de demanda y factores", cat: "Carta", items: [
+  { title: "Diligenciar ecuación de demanda y factores y cargar en MDC", day: 50, cost: 5 },
+  { title: "Aprobación Carta 9.7 por XM", day: 54, cost: 5 },
+]};
+const CNO_2233_DESPUES_DE = "c93"; // la 9.7 nueva va después de la 9.3 (mismos días)
+const ENERGIZACION_GROUPS_2233 = ENERGIZACION_GROUPS.flatMap((g) => {
+  const renumerado = { ...g, label: renumeraCno2233(g.label), items: g.items.map((it) => ({ ...it, title: renumeraCno2233(it.title) })) };
+  return g.id === CNO_2233_DESPUES_DE ? [renumerado, CARTA_97_CNO_2233] : [renumerado];
+});
+const ENERGIZACION_MILESTONES_2233 = ENERGIZACION_GROUPS_2233.flatMap((g) =>
+  g.items.map((it) => ({ ...it, cat: g.cat, group: g.label, groupId: g.id }))
+);
+const ENERGIZACION_TOTAL_COST_2233 = ENERGIZACION_MILESTONES_2233.reduce((s, m) => s + m.cost, 0);
+// Posición, en la lista plana de hitos, donde entran los de la 9.7 nueva. El avance de cada hito se
+// guarda por posición, así que al cambiar de norma se insertan/quitan ahí (ver cambiarNormaEnergizacion).
+const CNO_2233_POSICION = ENERGIZACION_MILESTONES_2233.findIndex((m) => m.groupId === CARTA_97_CNO_2233.id);
+const CNO_2233_CANTIDAD = CARTA_97_CNO_2233.items.length;
+
 /* ---------------------------------------------------------------------
    DATA: Trámite de energización para proyectos >1MW (ante el CND, no ante el OR como el de
    arriba) — transcrito del cronograma real de Filigrana (9.9 MWp), componente 8 completo
@@ -212,14 +236,38 @@ function classifyEnergizacionTipo(capacity) {
   const n = Number(String(capacity ?? "").replace(",", "."));
   return Number.isFinite(n) && n > 1 ? "mayor1mw" : "menor1mw";
 }
+const esCno2233 = (ener) => ener?.tipo !== "mayor1mw" && ener?.norma === "2233";
 function energizacionGroupsFor(ener) {
-  return ener?.tipo === "mayor1mw" ? ENERGIZACION_GROUPS_MAYOR_1MW : ENERGIZACION_GROUPS;
+  if (ener?.tipo === "mayor1mw") return ENERGIZACION_GROUPS_MAYOR_1MW;
+  return esCno2233(ener) ? ENERGIZACION_GROUPS_2233 : ENERGIZACION_GROUPS;
 }
 function energizacionMilestonesFor(ener) {
-  return ener?.tipo === "mayor1mw" ? ENERGIZACION_MILESTONES_MAYOR_1MW : ENERGIZACION_MILESTONES;
+  if (ener?.tipo === "mayor1mw") return ENERGIZACION_MILESTONES_MAYOR_1MW;
+  return esCno2233(ener) ? ENERGIZACION_MILESTONES_2233 : ENERGIZACION_MILESTONES;
 }
 function energizacionTotalCostFor(ener) {
-  return ener?.tipo === "mayor1mw" ? ENERGIZACION_TOTAL_COST_MAYOR_1MW : ENERGIZACION_TOTAL_COST;
+  if (ener?.tipo === "mayor1mw") return ENERGIZACION_TOTAL_COST_MAYOR_1MW;
+  return esCno2233(ener) ? ENERGIZACION_TOTAL_COST_2233 : ENERGIZACION_TOTAL_COST;
+}
+
+// Pasa un proyecto ≤1MW entre CNO 2121 y CNO 2233 sin perder lo marcado: los hitos se guardan por
+// posición, así que se insertan (o quitan) los de la Carta 9.7 nueva justo en su lugar y todo lo demás
+// conserva su estado y fecha. Proyectos >1MW no aplican.
+function cambiarNormaEnergizacion(ener, norma) {
+  if (!ener || ener.tipo === "mayor1mw" || (norma !== "2121" && norma !== "2233")) return ener;
+  if ((esCno2233(ener) ? "2233" : "2121") === norma) return ener;
+  const vacio = { done: false, fecha: "" };
+  const actual = [...(ener.milestones || [])];
+  const largoActual = energizacionMilestonesFor(ener).length;
+  while (actual.length < largoActual) actual.push(vacio);
+  if (norma === "2233") actual.splice(CNO_2233_POSICION, 0, ...Array.from({ length: CNO_2233_CANTIDAD }, () => ({ ...vacio })));
+  else actual.splice(CNO_2233_POSICION, CNO_2233_CANTIDAD);
+  return { ...ener, norma, milestones: actual };
+}
+// Hitos de la Carta 9.7 nueva que ya están marcados (se perderían al volver a CNO 2121).
+function hitosCno2233Marcados(ener) {
+  if (!esCno2233(ener)) return 0;
+  return (ener.milestones || []).slice(CNO_2233_POSICION, CNO_2233_POSICION + CNO_2233_CANTIDAD).filter((m) => m?.done).length;
 }
 function energizacionDiasRefFor(ener) {
   return ener?.tipo === "mayor1mw" ? ENERGIZACION_DIAS_REF_MAYOR_1MW : 200;
@@ -596,16 +644,19 @@ function emptyUpmeState() {
 // tipo: "menor1mw" (trámite ante el OR, ≤1MW) | "mayor1mw" (trámite ante el CND, >1MW) — se decide
 // solo por la capacidad del proyecto al crearlo (ver classifyEnergizacionTipo). fpoManual solo
 // aplica a "mayor1mw": ahí la FPO no se calcula, se digita a mano.
+// norma (solo ≤1MW): "2233" para los proyectos nuevos; los existentes sin norma guardada son CNO 2121.
 function emptyEnergizacionState(tipo = "menor1mw") {
-  return {
+  const ener = {
     // Vacío a propósito: si se pusiera hoy por defecto, un proyecto recién creado ya "estaría
     // atrasado" el mismo día que se crea, antes de que nadie haya arrancado nada de verdad. Las
     // alertas de atraso solo empiezan cuando la persona asigna la fecha real de inicio de trámites.
     fechaInicio: "",
     tipo,
     fpoManual: "",
-    milestones: (tipo === "mayor1mw" ? ENERGIZACION_MILESTONES_MAYOR_1MW : ENERGIZACION_MILESTONES).map(() => ({ done: false, fecha: "" })),
+    ...(tipo === "mayor1mw" ? {} : { norma: "2233" }),
   };
+  ener.milestones = energizacionMilestonesFor(ener).map(() => ({ done: false, fecha: "" }));
+  return ener;
 }
 
 function emptyCronogramaState() {
@@ -1700,7 +1751,7 @@ function buildReportHTML(project, data) {
   }).join("");
 
   let cursor = 0;
-  const enerHTML = ENERGIZACION_GROUPS.map((g) => {
+  const enerHTML = energizacionGroupsFor(data.energizacion).map((g) => {
     const start = cursor;
     cursor += g.items.length;
     const groupCost = g.items.reduce((s, it) => s + it.cost, 0);
@@ -1928,6 +1979,8 @@ export {
   energizacionGroupsFor,
   energizacionMilestonesFor,
   energizacionTotalCostFor,
+  cambiarNormaEnergizacion,
+  hitosCno2233Marcados,
   energizacionDiasRefFor,
   energizacionFpoFecha,
   energizacionFpoFechaSinExtension,
