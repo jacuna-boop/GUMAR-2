@@ -115,6 +115,27 @@ imports faltantes y reglas de hooks), `npm test` y `npm run build`. Localmente: 
 storage) y prueban guardado/conflictos, permisos por módulo y restauración. **Toda migración nueva
 debe agregarse también al final de `schema.sql`**, o estas pruebas no la ven.
 
+## Ambiente de pruebas
+
+Nunca probar con datos reales: hay dos ambientes de prueba con datos FICTICIOS
+(`supabase/seed_pruebas.sql`, generado por `npm run pruebas:generar-seed` desde
+`scripts/generar-seed-pruebas.mjs`; 5 usuarios `pruebas.*@gumarp.com.co`, uno por rol/cargo, todos
+con la contraseña `PRUEBAS_PASSWORD` de ese script, y 2 proyectos de ejemplo).
+
+- **Local (Docker)** — para que Claude pruebe con sesión iniciada en el navegador:
+  `npm run pruebas:iniciar` (levanta Supabase local con `schema.sql` + seed y crea
+  `.env.pruebas.local`), luego `npm run dev:pruebas` → http://localhost:5174 (en `.claude/launch.json`:
+  `solar-crm-pruebas`). `npm run pruebas:reiniciar-datos` vuelve al seed; `npm run pruebas:detener`.
+  En modo "pruebas", `supabaseClient.js` se niega a arrancar si la URL no es local.
+- **Staging (nube)** — proyecto de Supabase aparte, usado por las previews de Vercel de cada PR
+  (variables de entorno de Vercel con alcance "Preview"). Producción solo en "Production".
+
+**Peligro:** el CLI de Supabase de esta carpeta estuvo enlazado (`supabase/.temp/linked-project.json`)
+a otro proyecto. Nunca usar `--linked` ni `supabase db push`: los scripts usan `--local` explícito.
+
+**Cambios de dependencias:** usar `npx -y npm@10.9.2 install …` (no el npm 11 de este equipo): el
+npm 11 deja `package-lock.json` en un estado que `npm ci` de GitHub rechaza (pasó en el PR #7).
+
 ## Cómo se despliega
 
 1. Cambios de código → rama nueva + PR contra `main` del repo de GitHub conectado a Vercel

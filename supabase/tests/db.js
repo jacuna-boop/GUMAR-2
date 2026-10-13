@@ -17,7 +17,20 @@ const SUPABASE_STUBS = `
   create role authenticated;
   create role service_role;
   create schema auth;
-  create table auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}'::jsonb);
+  create table auth.users (
+    id uuid primary key, email text, raw_user_meta_data jsonb default '{}'::jsonb,
+    instance_id uuid, aud text, role text, encrypted_password text, email_confirmed_at timestamptz,
+    raw_app_meta_data jsonb, created_at timestamptz, updated_at timestamptz, confirmation_token text,
+    recovery_token text, email_change text, email_change_token_new text
+  );
+  create table auth.identities (
+    id uuid primary key, user_id uuid, provider_id text, identity_data jsonb, provider text,
+    last_sign_in_at timestamptz, created_at timestamptz, updated_at timestamptz
+  );
+  -- pgcrypto vive en el esquema extensions en Supabase; aquí basta una imitación.
+  create schema extensions;
+  create function extensions.gen_salt(text) returns text language sql as $$ select 'salt' $$;
+  create function extensions.crypt(text, text) returns text language sql as $$ select md5($1) $$;
   create function auth.uid() returns uuid language sql stable as
     $$ select nullif(current_setting('test.uid', true), '')::uuid $$;
   create function auth.role() returns text language sql stable as
@@ -48,6 +61,15 @@ export const ids = {
 
 // Usuarios: admin, uno por cargo (Pagos, Aprobador, UPME, Gestor de usuarios) y un lector.
 // Todos miembros de un proyecto "Demo" con dos pagos (ninguno aprobado).
+// Base vacía: solo schema.sql (y lo que traiga "extraSql", p. ej. el seed de pruebas).
+export async function createEmptyDb(extraSql = "") {
+  const db = new PGlite();
+  await db.exec(SUPABASE_STUBS);
+  await db.exec(schemaSql);
+  if (extraSql) await db.exec(extraSql);
+  return db;
+}
+
 export async function createDb() {
   const db = new PGlite();
   await db.exec(SUPABASE_STUBS);
