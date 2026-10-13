@@ -62,7 +62,8 @@ export async function downloadPagosTemplate(data, projectName) {
     "5. Las fechas van en formato AAAA-MM-DD, por ejemplo 2026-03-15.",
     "6. Borra la fila de ejemplo (en cursiva) antes de subir el archivo, si no la necesitas.",
     "7. Al subir este archivo a la plataforma, se REEMPLAZAN todas las órdenes de este proyecto",
-    "   por lo que traiga el archivo — no se suman a las que ya existen.",
+    "   por lo que traiga el archivo — no se suman a las que ya existen. Las órdenes con el mismo número",
+    "   conservan sus amarres al presupuesto, y los pagos con la misma fecha y valor conservan su aprobación.",
   ].forEach((line, i) => {
     const row = info.addRow([line]);
     if (i === 0) row.font = { bold: true };
@@ -305,4 +306,36 @@ export async function parsePagosWorkbook(arrayBuffer) {
     }
   });
   return { ordenes: Array.from(ordenesMap.values()), skipped };
+}
+
+// Al cargar la plantilla de Pagos se reemplazan las órdenes por las del archivo, pero sin perder lo
+// que la plantilla no trae: si el número de orden ya existía se conservan su id y sus amarres al
+// presupuesto, y si un pago coincide (misma fecha y valor) se conservan su id y su aprobación.
+// También cuenta los pagos aprobados que el archivo deja por fuera (se eliminarían).
+const normNumero = (n) => String(n || "").trim().toLowerCase();
+
+export function mergeImportedOrdenes(existing = [], imported = []) {
+  const byNumero = new Map(existing.map((o) => [normNumero(o.numero), o]));
+  let amarresConservados = 0;
+  let aprobacionesConservadas = 0;
+  const pagosConservados = new Set();
+  const ordenes = imported.map((io) => {
+    const prev = byNumero.get(normNumero(io.numero));
+    if (!prev) return io;
+    if ((prev.presupuestoItems || []).length) amarresConservados++;
+    const pagos = io.pagos.map((ip) => {
+      const match = (prev.pagos || []).find((pp) =>
+        !pagosConservados.has(pp.id) && pp.fecha === ip.fecha && Number(pp.valor) === Number(ip.valor));
+      if (!match) return ip;
+      pagosConservados.add(match.id);
+      if (!match.aprobado) return { ...ip, id: match.id };
+      aprobacionesConservadas++;
+      return { ...ip, id: match.id, aprobado: true, aprobadoPor: match.aprobadoPor, aprobadoEn: match.aprobadoEn };
+    });
+    return { ...prev, ...io, id: prev.id, pagos };
+  });
+  const aprobadosEliminados = existing
+    .flatMap((o) => o.pagos || [])
+    .filter((p) => p.aprobado && !pagosConservados.has(p.id)).length;
+  return { ordenes, amarresConservados, aprobacionesConservadas, aprobadosEliminados };
 }
