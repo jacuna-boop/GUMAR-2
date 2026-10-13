@@ -91,7 +91,7 @@ function Dashboard({ session }) {
   const [showInformePPI01Modal, setShowInformePPI01Modal] = useState(false);
   const [informePPI01Ids, setInformePPI01Ids] = useState(null); // array de project ids | null (dispara la vista de impresión)
   const [showHistory, setShowHistory] = useState(false);
-  const [role, setRole] = useState("editor"); // "admin" | "editor" | "lector" — "editor" es el default seguro
+  const [role, setRole] = useState("lector"); // "admin" | "editor" | "lector" — si no se pudo leer el perfil, solo lectura (la base de datos igual decide)
   const [cargoPerms, setCargoPerms] = useState({}); // casillas del cargo asignado (ver tabla "cargos") — vacío = sin permisos
   const [myFullName, setMyFullName] = useState("");
   const [myCargoName, setMyCargoName] = useState(""); // nombre del cargo asignado (para "Cargo del responsable" del informe PP-I-01)
@@ -1008,14 +1008,14 @@ function AttachmentsButton({ projectId, modulo, entidadId, readOnly }) {
 
   return (
     <span style={{ position: "relative", display: "inline-block" }}>
-      <button type="button" style={styles.attachBtn} onClick={() => setOpen((v) => !v)} title="Adjuntos">
+      <button type="button" className="ro-ok" style={styles.attachBtn} onClick={() => setOpen((v) => !v)} title="Adjuntos">
         <Paperclip size={12} /> {files && files.length > 0 ? files.length : ""}
       </button>
       {open && (
         <div style={styles.attachPopover} onClick={(e) => e.stopPropagation()}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <span style={{ fontSize: 11.5, fontWeight: 700, color: OVERVIEW_LIGHT.textPrimary }}>Adjuntos</span>
-            <button type="button" style={styles.iconBtn} onClick={() => setOpen(false)}><X size={13} /></button>
+            <button type="button" className="ro-ok" style={styles.iconBtn} onClick={() => setOpen(false)}><X size={13} /></button>
           </div>
           {files === null ? (
             <div style={{ fontSize: 11, color: OVERVIEW_LIGHT.textSecondary }}>Cargando…</div>
@@ -2252,7 +2252,7 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
         <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: OVERVIEW_LIGHT.textSecondary, pointerEvents: "none" }} />
         <input
           style={{ ...lightMiniInput, paddingLeft: 30 }}
-          placeholder="Buscar actividad por Id o nombre..."
+          className="ro-ok" placeholder="Buscar actividad por Id o nombre..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
@@ -2278,7 +2278,7 @@ function CronogramaModule({ data, onChange, projectId, isLector }) {
             {searchTerm && visibleTasks.length === 0 && (
               <tr>
                 <td colSpan={10} style={{ ...lightOvTd, textAlign: "center", color: OVERVIEW_LIGHT.textSecondary }}>
-                  Sin resultados para "{searchQuery}".
+                  {searchQuery.trim() ? `Sin resultados para "${searchQuery}".` : "Todavía no hay nada registrado aquí."}
                 </td>
               </tr>
             )}
@@ -3060,7 +3060,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
       <div style={styles.pasteBtnRow}>
         {projectName && (
           <>
-            <button style={lightPasteBtn} onClick={() => downloadPresupuestoTemplate(items, projectName)}>
+            <button className="ro-ok" style={lightPasteBtn} onClick={() => downloadPresupuestoTemplate(items, projectName)}>
               <FileDown size={14} /> Descargar plantilla Excel
             </button>
             <button style={lightPasteBtn} onClick={() => setShowTemplateUpload(true)}>
@@ -3095,7 +3095,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
         <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: OVERVIEW_LIGHT.textSecondary, pointerEvents: "none" }} />
         <input
           style={{ ...lightMiniInput, paddingLeft: 30 }}
-          placeholder="Buscar ítem por código o descripción..."
+          className="ro-ok" placeholder="Buscar ítem por código o descripción..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
@@ -3123,7 +3123,7 @@ function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedI
           {searchTerm && !grouped.some((g) => g.items.some((it) => normalize(it.item).includes(searchTerm) || normalize(it.descripcion).includes(searchTerm))) && (
             <tr>
               <td colSpan={12} style={{ ...lightOvTd, textAlign: "center", color: OVERVIEW_LIGHT.textSecondary }}>
-                Sin resultados para "{searchQuery}".
+                {searchQuery.trim() ? `Sin resultados para "${searchQuery}".` : "Todavía no hay nada registrado aquí."}
               </td>
             </tr>
           )}
@@ -3754,13 +3754,13 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
   return (
     <div style={{ background: OVERVIEW_LIGHT.page, margin: "-26px -32px -60px", padding: "26px 32px 60px", minHeight: "100vh" }}>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <button style={lightPasteBtn} onClick={() => downloadPagosTemplate(data, projectName)}>
+        <button className="ro-ok" style={lightPasteBtn} onClick={() => downloadPagosTemplate(data, projectName)}>
           <FileDown size={14} /> Descargar plantilla Excel
         </button>
         <button style={lightPasteBtn} onClick={() => setShowTemplateUpload(true)}>
           <FileUp size={14} /> Cargar plantilla Excel
         </button>
-        <button style={lightPasteBtn} onClick={() => setShowRangeExport(true)}>
+        <button className="ro-ok" style={lightPasteBtn} onClick={() => setShowRangeExport(true)}>
           <FileDown size={14} /> Exportar programados por fecha
         </button>
       </div>
@@ -3770,10 +3770,12 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
       )}
 
       {showRangeExport && (
-        <PagosRangeExportModal
-          onClose={() => setShowRangeExport(false)}
-          onExport={(range) => { onExportProgramados?.(range); setShowRangeExport(false); }}
-        />
+        <div className="ro-scope">
+          <PagosRangeExportModal
+            onClose={() => setShowRangeExport(false)}
+            onExport={(range) => { onExportProgramados?.(range); setShowRangeExport(false); }}
+          />
+        </div>
       )}
 
       <div style={styles.overviewStatRow} className="app-stat-row">
@@ -3810,7 +3812,7 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
         <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: OVERVIEW_LIGHT.textSecondary, pointerEvents: "none" }} />
         <input
           style={{ ...lightMiniInput, paddingLeft: 30 }}
-          placeholder="Buscar por proveedor, orden o concepto..."
+          className="ro-ok" placeholder="Buscar por proveedor, orden o concepto..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
@@ -3832,7 +3834,7 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
             {ordenesFiltradas.length === 0 && (
               <tr>
                 <td colSpan={6} style={{ ...lightOvTd, textAlign: "center", color: OVERVIEW_LIGHT.textSecondary }}>
-                  Sin resultados para "{searchQuery}".
+                  {searchQuery.trim() ? `Sin resultados para "${searchQuery}".` : "Todavía no hay nada registrado aquí."}
                 </td>
               </tr>
             )}
@@ -3850,6 +3852,7 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                       <input
                         style={{ ...lightMiniInput, fontWeight: 600 }}
                         value={o.numero}
+                        onClick={(e) => e.stopPropagation()}
                         onChange={(e) => updateOrden(o.id, { numero: e.target.value })}
                       />
                     </td>
@@ -3858,6 +3861,7 @@ function PagosModule({ data, onChange, projectName, presupuestoBase = [], canApr
                         style={lightMiniInput}
                         placeholder="Concepto de la orden"
                         value={o.descripcion || ""}
+                        onClick={(e) => e.stopPropagation()}
                         onChange={(e) => updateOrden(o.id, { descripcion: e.target.value })}
                       />
                       {(o.presupuestoItems || []).length > 0 && (
@@ -5287,55 +5291,6 @@ function ConflictModal({ conflict, projectName, localData, onResolve }) {
   );
 }
 
-function ExportModal({ title, filename, content, isHTML, onClose }) {
-  const [copied, setCopied] = useState(false);
-  const textareaRef = React.useRef(null);
-
-  useEffect(() => {
-    // Auto-select all text so a manual Ctrl/Cmd+C also works as a fallback
-    textareaRef.current?.focus();
-    textareaRef.current?.select();
-  }, []);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    } catch {
-      textareaRef.current?.focus();
-      textareaRef.current?.select();
-      try {
-        document.execCommand("copy");
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2500);
-      } catch {
-        // Selection remains for the person to copy manually with Ctrl/Cmd+C
-      }
-    }
-  };
-
-  return (
-    <div style={styles.modalOverlay} onClick={onClose}>
-      <div style={styles.exportModal} onClick={(e) => e.stopPropagation()}>
-        <div style={styles.modalHead}>
-          <h3 style={styles.h3}>{title}</h3>
-          <button style={styles.iconBtn} onClick={onClose}><X size={16} /></button>
-        </div>
-        <p style={styles.exportHint}>
-          La descarga automática de archivos no está disponible aquí. Copia el contenido y pégalo en un
-          archivo nuevo llamado <strong>{filename}</strong> {isHTML ? "usando el Bloc de notas (o similar) — luego ábrelo y usa Ctrl+P / Cmd+P para guardarlo como PDF." : "usando el Bloc de notas (o similar)."}
-        </p>
-        <button style={styles.copyBtn} onClick={copy}>
-          {copied ? <Check size={14} color="#5FBF8F" /> : <Copy size={14} />}
-          {copied ? "Copiado" : "Copiar al portapapeles"}
-        </button>
-        <textarea ref={textareaRef} readOnly value={content} style={styles.exportTextarea} onFocus={(e) => e.target.select()} />
-      </div>
-    </div>
-  );
-}
-
 function ImportTextModal({ onClose, onImport }) {
   const [text, setText] = useState("");
   const [error, setError] = useState(false);
@@ -6171,12 +6126,19 @@ function GlobalStyle() {
       .spin { animation: spin 1s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
 
-      .readonly-gate input:not(.approve-toggle),
+      .readonly-gate input:not(.approve-toggle):not(.ro-ok),
       .readonly-gate select,
       .readonly-gate textarea,
-      .readonly-gate button:not(.view-toggle) {
+      .readonly-gate button:not(.view-toggle):not(.ro-ok) {
         pointer-events: none;
         opacity: 0.6;
+      }
+      /* En solo lectura se puede buscar, ver adjuntos y exportar (ro-ok / ro-scope). */
+      .readonly-gate .ro-scope input,
+      .readonly-gate .ro-scope select,
+      .readonly-gate .ro-scope button {
+        pointer-events: auto !important;
+        opacity: 1 !important;
       }
 
       .print-only { display: none; }

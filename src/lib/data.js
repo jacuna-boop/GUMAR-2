@@ -549,7 +549,9 @@ const CAT_STYLE = {
 };
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// Fecha local (no UTC): con toISOString(), después de las 7 pm en Colombia ya daba el día siguiente.
+const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const todayISO = () => localISO(new Date());
 const daysBetween = (isoStart, isoEnd) => {
   const a = new Date(isoStart + "T00:00:00");
   const b = new Date(isoEnd + "T00:00:00");
@@ -558,12 +560,18 @@ const daysBetween = (isoStart, isoEnd) => {
 const addYears = (iso, n) => {
   const d = new Date(iso + "T00:00:00");
   d.setFullYear(d.getFullYear() + n);
-  return d.toISOString().slice(0, 10);
+  return localISO(d);
 };
+// Si el día no existe en el mes destino (31 ene + 1 mes), queda en el último día de ese mes
+// (28/29 feb) en vez de desbordarse al mes siguiente.
 const addMonths = (iso, n) => {
   const d = new Date(iso + "T00:00:00");
+  const day = d.getDate();
+  d.setDate(1);
   d.setMonth(d.getMonth() + n);
-  return d.toISOString().slice(0, 10);
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, lastDay));
+  return localISO(d);
 };
 const fmtDate = (iso) => {
   if (!iso) return "—";
@@ -771,10 +779,16 @@ function ensureFullProjectData(data) {
         porcentajesMensual: rawFlujoCaja.porcentajesMensual && typeof rawFlujoCaja.porcentajesMensual === "object" ? rawFlujoCaja.porcentajesMensual : {},
       }
     : emptyFlujoCajaState();
+  const hasBase = Array.isArray(rawPresupuesto?.base);
+  const hasEjecucion = Array.isArray(rawPresupuesto?.ejecucion);
   const presupuesto =
-    rawPresupuesto && (rawPresupuesto.base || rawPresupuesto.ejecucion)
-      ? { base: rawPresupuesto.base || [], ejecucion: rawPresupuesto.ejecucion || [], flujoCaja }
-      : emptyPresupuestoState();
+    hasBase || hasEjecucion
+      ? { base: hasBase ? rawPresupuesto.base : [], ejecucion: hasEjecucion ? rawPresupuesto.ejecucion : [], flujoCaja }
+      : Array.isArray(rawPresupuesto?.items)
+        // Formato viejo {items}: se conservan como base en vez de descartarlos (si no, el siguiente
+        // guardado los borraba).
+        ? { base: rawPresupuesto.items, ejecucion: [], flujoCaja }
+        : emptyPresupuestoState();
 
   const rawPagos = data?.pagos;
   const pagos = rawPagos && Array.isArray(rawPagos.ordenes)
@@ -797,7 +811,9 @@ function ensureFullProjectData(data) {
       : emptyCronogramaState();
 
   const rawUpme = data?.upme;
-  const upme = rawUpme && rawUpme.steps ? rawUpme : emptyUpmeState();
+  const upme = rawUpme && rawUpme.steps && typeof rawUpme.steps === "object" && !Array.isArray(rawUpme.steps)
+    ? { ...rawUpme, steps: { ...emptyUpmeState().steps, ...rawUpme.steps } } // pasos nuevos aparecen vacíos
+    : emptyUpmeState();
 
   const rawEner = data?.energizacion;
   const energizacion = rawEner && Array.isArray(rawEner.milestones) ? rawEner : emptyEnergizacionState();
@@ -1085,17 +1101,26 @@ function fmtMoney(n) {
 // Parses a number typed/copied in Colombian format (e.g. "338.282" o "338.282,50") into a plain float
 function parseColombianNumber(str) {
   if (str === undefined || str === null) return 0;
+  if (typeof str === "number") return isFinite(str) ? str : 0; // ya es número (p. ej. celda de Excel)
   let s = String(str).trim();
   if (!s) return 0;
   s = s.replace(/[^0-9.,-]/g, "");
   if (!s) return 0;
-  if (s.includes(",") && s.includes(".")) {
-    s = s.replace(/\./g, "").replace(",", ".");
-  } else if (s.includes(",")) {
-    s = s.replace(",", ".");
-  } else {
-    s = s.replace(/\./g, ""); // "." usado como separador de miles
+  const commas = (s.match(/,/g) || []).length;
+  const dots = (s.match(/\./g) || []).length;
+  if (commas && dots) {
+    // El separador que aparece de último es el decimal: "1.234,56" (CO) o "1,234.56" (EE. UU.)
+    s = s.lastIndexOf(",") > s.lastIndexOf(".")
+      ? s.replace(/\./g, "").replace(",", ".")
+      : s.replace(/,/g, "");
+  } else if (commas > 1) {
+    s = s.replace(/,/g, ""); // "1,234,567": comas de miles
+  } else if (commas === 1) {
+    s = s.replace(",", "."); // "1234,5": coma decimal
+  } else if (dots > 1 || /\.\d{3}$/.test(s)) {
+    s = s.replace(/\./g, ""); // "1.234.567" o "338.282": puntos de miles
   }
+  // Un solo punto sin 3 dígitos después ("0.5", "12.75") es decimal.
   const n = parseFloat(s);
   return isNaN(n) ? 0 : n;
 }
@@ -1211,10 +1236,7 @@ function buildCurvaSData(cronograma, cutoffDate = todayISO()) {
   const sortedSeg = [...seguimiento].filter((s) => s.fecha).sort((a, b) => a.fecha.localeCompare(b.fecha));
 
   return sortedDates.map((date) => {
-    const base = leafTasks.reduce((sum, t) => {
-      if (!t.fechaInicio || !t.fechaFin) return sum;
-      return sum + (Number(t.peso) || 0) * fractionElapsed(t.fechaInicio, t.fechaFin, date);
-    }, 0);
+    const base = cronogramaBasePctAt(leafTasks, date);
     const lastSeg = date <= cutoffDate ? [...sortedSeg].filter((s) => s.fecha <= date).pop() : null;
     return {
       date,
@@ -1243,8 +1265,21 @@ function cronogramaAvanceActual(tasks) {
   const leaf = (tasks || []).filter((t) => !t.esGrupo);
   const pesoTotal = leaf.reduce((s, t) => s + (Number(t.peso) || 0), 0);
   if (!pesoTotal) return 0;
-  const avance = leaf.reduce((s, t) => s + (Number(t.peso) || 0) * (Number(t.pctCompletado) || 0) / 100, 0);
-  return Math.round((avance / pesoTotal) * pesoTotal * 10) / 10; // = avance ponderado sobre 100
+  const avance = leaf.reduce((s, t) => s + (Number(t.peso) || 0) * (Number(t.pctCompletado) || 0), 0);
+  // Normalizado sobre el peso total: da % de avance aunque los pesos no sumen exactamente 100.
+  return Math.round((avance / pesoTotal) * 10) / 10;
+}
+
+// % de la línea base que debería ir cumplido a una fecha, normalizado sobre el peso total (igual
+// que cronogramaAvanceActual, para que las dos curvas sean comparables).
+function cronogramaBasePctAt(leafTasks, dateISO) {
+  const pesoTotal = leafTasks.reduce((s, t) => s + (Number(t.peso) || 0), 0);
+  if (!pesoTotal) return 0;
+  const base = leafTasks.reduce((sum, t) => {
+    if (!t.fechaInicio || !t.fechaFin) return sum;
+    return sum + (Number(t.peso) || 0) * fractionElapsed(t.fechaInicio, t.fechaFin, dateISO);
+  }, 0);
+  return (base / pesoTotal) * 100;
 }
 
 // Alerta única de cronograma para los resúmenes: compara la curva S (línea base esperada a hoy vs.
@@ -1254,10 +1289,7 @@ function cronogramaCurvaSAlerta(cronograma, umbral = 5) {
   const leaf = (cronograma?.tasks || []).filter((t) => !t.esGrupo);
   if (leaf.length === 0) return null;
   const hoy = todayISO();
-  const basePct = Math.round(leaf.reduce((sum, t) => {
-    if (!t.fechaInicio || !t.fechaFin) return sum;
-    return sum + (Number(t.peso) || 0) * fractionElapsed(t.fechaInicio, t.fechaFin, hoy);
-  }, 0));
+  const basePct = Math.round(cronogramaBasePctAt(leaf, hoy));
   const realPct = cronogramaAvanceActual(cronograma.tasks);
   const brecha = Math.round(basePct - realPct);
   if (brecha < umbral) return null;
@@ -1297,17 +1329,18 @@ function parseCronogramaPaste(text) {
   let skipped = 0;
   dataLines.forEach((line) => {
     const cols = line.split("\t");
-    const nombre = (idxNombre !== -1 ? cols[idxNombre] : cols[1] || "").trim();
+    const col = (i) => (i !== -1 ? cols[i] || "" : ""); // filas más cortas que el encabezado no revientan
+    const nombre = (idxNombre !== -1 ? col(idxNombre) : cols[1] || "").trim();
     if (!nombre) {
       skipped++;
       return;
     }
-    const duracionTexto = (idxDuracion !== -1 ? cols[idxDuracion] : "").trim();
-    const fechaInicio = parseProjectDate(idxComienzo !== -1 ? cols[idxComienzo] : "");
-    const fechaFin = parseProjectDate(idxFin !== -1 ? cols[idxFin] : "");
-    const predecesoras = (idxPred !== -1 ? cols[idxPred] : "").trim();
-    const pctCompletado = idxPct !== -1 ? parsePercentValue(cols[idxPct]) : 0;
-    const displayId = (idxId !== -1 ? cols[idxId] : "").trim();
+    const duracionTexto = col(idxDuracion).trim();
+    const fechaInicio = parseProjectDate(col(idxComienzo));
+    const fechaFin = parseProjectDate(col(idxFin));
+    const predecesoras = col(idxPred).trim();
+    const pctCompletado = idxPct !== -1 ? parsePercentValue(col(idxPct)) : 0;
+    const displayId = col(idxId).trim();
     const esGrupo = !!duracionTexto && !/^0\s/.test(duracionTexto);
     tasks.push({
       id: uid(), displayId, nombre, duracionTexto, fechaInicio, fechaFin,
@@ -1435,7 +1468,7 @@ function computeEasterSunday(year) {
   return new Date(year, month - 1, day);
 }
 
-const toISO = (date) => date.toISOString().slice(0, 10);
+const toISO = (date) => localISO(date);
 const addDays = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d; };
 
 // Ley Emiliani: si la fecha no cae lunes, se traslada al lunes siguiente.
@@ -1480,14 +1513,16 @@ function isWorkingDay(date) {
 
 // Suma (o resta, si n es negativo) n días laborales a una fecha ISO, saltando domingos.
 function addWorkingDays(isoDate, n) {
+  if (!isoDate) return ""; // sin fecha no hay qué sumar (antes reventaba con "Invalid time value")
   const d = new Date(isoDate + "T00:00:00");
+  if (isNaN(d)) return "";
   let remaining = Math.abs(n);
   const step = n >= 0 ? 1 : -1;
   while (remaining > 0) {
     d.setDate(d.getDate() + step);
     if (isWorkingDay(d)) remaining--;
   }
-  return d.toISOString().slice(0, 10);
+  return localISO(d);
 }
 
 // Recalcula fechaInicio/fechaFin de las tareas cuyas predecesoras resuelven a otra tarea existente
@@ -1537,9 +1572,15 @@ function computeCronogramaSchedule(tasks) {
         // FC (Fin-a-Comienzo), el default de Project
         impliedComienzo = addWorkingDays(predDates.fechaFin, p.lag);
       }
-      if (!comienzo || impliedComienzo > comienzo) comienzo = impliedComienzo;
+      if (impliedComienzo && (!comienzo || impliedComienzo > comienzo)) comienzo = impliedComienzo;
     });
     resolving.delete(t.id);
+    if (!comienzo) {
+      // Ninguna predecesora tiene fechas todavía: la tarea se deja como está.
+      const r = { fechaInicio: t.fechaInicio, fechaFin: t.fechaFin };
+      resolved.set(t.id, r);
+      return r;
+    }
     const fin = addWorkingDays(comienzo, duracion);
     const r = { fechaInicio: comienzo, fechaFin: fin };
     resolved.set(t.id, r);
@@ -1607,7 +1648,7 @@ function computeCriticalPath(tasks) {
       } else {
         impliedComienzo = addWorkingDays(predTask.fechaFin, p.lag);
       }
-      if (!bestComienzo || impliedComienzo > bestComienzo) {
+      if (impliedComienzo && (!bestComienzo || impliedComienzo > bestComienzo)) {
         bestComienzo = impliedComienzo;
         best = predTask.id;
       }
