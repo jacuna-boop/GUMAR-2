@@ -95,6 +95,12 @@ mover código: `npm run build` no lo detecta; renderiza la pestaña o corre ESLi
 - **Historial**: lo escribe un trigger en el servidor (`log_project_history`, ventanas fijas de 10 min por
   persona, con `changed_modules`). La app ya no puede escribir ni editar `project_history`. Un trigger
   `bump_module_versions` sube la versión aunque el cambio venga del SQL Editor, así la app no lo pisa.
+- **Restaurar desde el historial** (`supabase/restaurar_historial.sql`, botón en `HistoryModal`):
+  `rpc('restore_project_modules', { p_history_id, p_modules })` devuelve solo los módulos elegidos.
+  Corre con permisos de quien llama (cada quien restaura lo que su cargo le deja editar). El trigger
+  guarda dos filas nuevas que nunca se fusionan: `kind = 'antes_de_restaurar'` (estado previo, para
+  deshacer) y `kind = 'restauracion'` (con `source_history_id`). Si cambias `log_project_history`,
+  la versión vigente es la de `restaurar_historial.sql`, no la de `proteger_datos.sql`.
 - **Vinculación Presupuesto base ↔ ejecución**: los ítems comparten el mismo `id` entre ambas listas
   cuando se crean desde "base". Borrar un ítem de base también borra su par en ejecución *solo si* ese
   par sigue en $0 (nadie ha registrado nada real todavía).

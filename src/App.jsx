@@ -64,7 +64,7 @@ function Dashboard({ session }) {
   const {
     projectData, getProjectData, loadErrors, loadProjectData, updateProjectData,
     saveStatus, saveErrorMessage, lastSaved, versioned, conflict, resolveConflict,
-    flushAll, retryNow, hasUnsaved, setProjectRow, forgetProject, forgetAll, discardAndReload,
+    flushAll, retryNow, hasUnsaved, setProjectRow, forgetProject, forgetAll, discardAndReload, restoreFromHistory,
   } = useProjectSync(user);
   const [showAddProject, setShowAddProject] = useState(false);
   const [saveError, setSaveError] = useState(false); // errores de acciones puntuales (crear, importar…)
@@ -526,7 +526,12 @@ function Dashboard({ session }) {
         />
       )}
       {showHistory && selected && (
-        <HistoryModal project={selected} onClose={() => setShowHistory(false)} />
+        <HistoryModal
+          project={selected}
+          onClose={() => setShowHistory(false)}
+          canRestoreModule={(m) => (m === "info" ? canEditInfo : hasPerm(TAB_PERM_KEY[m]))}
+          onRestore={(historyId, modules) => restoreFromHistory(selected.id, historyId, modules)}
+        />
       )}
       {showAddProject && (
         <ProjectFormModal
