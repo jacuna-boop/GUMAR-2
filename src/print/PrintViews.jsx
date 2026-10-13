@@ -1,3 +1,4 @@
+import { ejeTiempoProps } from "../lib/fechasGrafica.js";
 import { addMonths, balanceMargenTotals, balanceTotals, calcPresupuestoItem, cronogramaAvanceActual, cronogramaPesoTotal, daysBetween, energizacionGroupsFor, energizacionProgress, fmtDate, fmtDateTime, fmtMoney, groupPresupuestoItems, nextEnergizacionMilestone, ordenPagado, ordenSaldo, pagosTotals, presupuestoListTotal, presupuestoTotals, todayISO, upmeActiveSteps, upmeNextStep, upmeProgress } from "../lib/data.js";
 import { buildInformeProyecto } from "../lib/informePPI01.js";
 import { CartesianGrid, Legend as RLegend, Line, LineChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
@@ -610,7 +611,7 @@ export function PrintInformePPI01({ projects, projectDataById }) {
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={inf.curvaSEnergizacion} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#E2E5E8" />
-                    <XAxis dataKey="label" tick={{ fill: "#777", fontSize: 9 }} />
+                    <XAxis {...ejeTiempoProps(inf.curvaSEnergizacion)} tick={{ fill: "#777", fontSize: 9 }} />
                     <YAxis domain={[0, 100]} tick={{ fill: "#777", fontSize: 9 }} unit="%" />
                     <RLegend wrapperStyle={{ fontSize: 11 }} />
                     <Line type="monotone" dataKey="base" name="Línea base" stroke="#4FA8D8" strokeWidth={2} dot={false} isAnimationActive={false} />

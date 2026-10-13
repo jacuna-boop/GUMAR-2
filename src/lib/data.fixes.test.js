@@ -106,3 +106,19 @@ describe("ensureFullProjectData — no descarta datos", () => {
     expect(Object.keys(out.upme.steps).length).toBeGreaterThan(1);
   });
 });
+
+describe("curva S de energización", () => {
+  it("arranca en 0 % el día de inicio, trae ts para el eje de tiempo y la fecha real manda", async () => {
+    const { buildEnergizacionCurvaSData, emptyEnergizacionState } = await import("./data.js");
+    const ener = { ...emptyEnergizacionState(), fechaInicio: "2026-04-13" };
+    ener.milestones = ener.milestones.map((m, i) => (i < 2 ? { done: true, fecha: "2026-04-20" } : m));
+    const c = buildEnergizacionCurvaSData(ener, "2026-05-01");
+    expect(c[0]).toMatchObject({ date: "2026-04-13", base: 0, real: 0, inicio: true });
+    expect(c[1].date).toBe("2026-04-13"); // los hitos del día 0 suben la base ese mismo día
+    expect(c[1].base).toBeGreaterThan(0);
+    expect(c.every((p, i) => i === 0 || p.ts >= c[i - 1].ts)).toBe(true);
+    expect(c[0].ts).toBe(new Date(2026, 3, 13).getTime());
+    expect(c.find((p) => p.date === "2026-04-19").real).toBe(0);
+    expect(c.find((p) => p.date === "2026-04-20").real).toBeGreaterThan(0);
+  });
+});

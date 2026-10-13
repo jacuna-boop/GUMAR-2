@@ -17,7 +17,8 @@ import {
 // Busca el punto de la curva S justo en cutoffDate (siempre está, se agrega explícito al armar la
 // curva); si por algún motivo no está, cae al último punto con avance real no nulo.
 function cumplimientoEnCorte(curva, cutoffDate) {
-  return curva.find((p) => p.date === cutoffDate) || [...curva].reverse().find((p) => p.real !== null) || null;
+  // El último punto de esa fecha (el día de inicio tiene dos: el arranque en 0 % y el del día 0).
+  return [...curva].reverse().find((p) => p.date === cutoffDate) || [...curva].reverse().find((p) => p.real !== null) || null;
 }
 
 // "Municipio, Departamento" (como se guarda project.location) separado en sus dos partes, sin

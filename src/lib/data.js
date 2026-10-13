@@ -1821,7 +1821,7 @@ function buildEnergizacionCurvaSData(ener, cutoffDate = todayISO()) {
 
   const withDates = milestones.map((m, i) => ({
     cost: m.cost,
-    fechaEsperada: addDays(start, m.day).toISOString().slice(0, 10),
+    fechaEsperada: toISO(addDays(start, m.day)),
     done: !!ener.milestones[i]?.done,
     fechaReal: ener.milestones[i]?.fecha || null,
   }));
@@ -1834,18 +1834,27 @@ function buildEnergizacionCurvaSData(ener, cutoffDate = todayISO()) {
   dateSet.add(cutoffDate);
   const sortedDates = Array.from(dateSet).sort();
 
-  return sortedDates.map((date) => {
-    const baseCost = withDates.reduce((s, m) => s + (m.fechaEsperada <= date ? m.cost : 0), 0);
-    const realCost = date > cutoffDate
-      ? null
-      : withDates.reduce((s, m) => s + (m.done && m.fechaReal && m.fechaReal <= date ? m.cost : 0), 0);
-    return {
-      date,
-      label: fmtDate(date),
-      base: Math.round((baseCost / totalCost) * 1000) / 10,
-      real: realCost === null ? null : Math.round((realCost / totalCost) * 1000) / 10,
-    };
+  // ts: la fecha como número, para que la gráfica use un eje de tiempo proporcional (12 días ocupan
+  // menos ancho que 3 meses), en vez de poner todos los puntos a la misma distancia.
+  const punto = (date, baseCost, realCost) => ({
+    date,
+    ts: new Date(date + "T00:00:00").getTime(),
+    label: fmtDate(date),
+    base: Math.round((baseCost / totalCost) * 1000) / 10,
+    real: realCost === null ? null : Math.round((realCost / totalCost) * 1000) / 10,
   });
+  const realHasta = (date, incluyeDia) => (date > cutoffDate ? null : withDates.reduce((s, m) =>
+    s + (m.done && m.fechaReal && (incluyeDia ? m.fechaReal <= date : m.fechaReal < date) ? m.cost : 0), 0));
+
+  const puntos = sortedDates.map((date) =>
+    punto(date, withDates.reduce((s, m) => s + (m.fechaEsperada <= date ? m.cost : 0), 0), realHasta(date, true)));
+
+  // La curva arranca en 0 % el mismo día de inicio: los hitos del "Día 0" la suben ese mismo día
+  // (segundo punto con la misma fecha), en vez de que la gráfica empiece ya en ~3 %.
+  const iInicio = puntos.findIndex((p) => p.date >= ener.fechaInicio);
+  puntos.splice(iInicio === -1 ? puntos.length : iInicio, 0,
+    { ...punto(ener.fechaInicio, 0, realHasta(ener.fechaInicio, false)), inicio: true });
+  return puntos;
 }
 
 // Arma los "cortes de obra" para el informe PP-I-01: agrupa los pagos por proveedor (solo los que
