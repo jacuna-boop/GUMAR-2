@@ -13,6 +13,8 @@ import { COLOMBIA_LOCATIONS } from "./lib/colombiaLocations";
 import Login from "./components/Login";
 import CronogramaGantt from "./components/CronogramaGantt";
 import gumarLogo from "./assets/gumar-logo.jpg";
+import { useProjectSync } from "./hooks/useProjectSync";
+import { MODULE_LABELS } from "./lib/sync.js";
 import {
   UPME_STEPS,
   CAT_STYLE, STATUS_LABELS, uid, todayISO, daysBetween, addYears, addMonths, fmtDate, fmtTime, fmtDateTime,
@@ -68,11 +70,14 @@ function Dashboard({ session }) {
   const [selectedId, setSelectedId] = useState(null);
   const [tab, setTab] = useState("resumen");
   const [loading, setLoading] = useState(true);
-  const [projectData, setProjectData] = useState({}); // { [id]: {upme, energizacion, cronograma} }
+  const {
+    projectData, getProjectData, loadErrors, loadProjectData, updateProjectData,
+    saveStatus, lastSaved, versioned, conflict, resolveConflict,
+    flushAll, retryNow, hasUnsaved, setProjectRow, forgetProject, forgetAll,
+  } = useProjectSync(user);
   const [showAddProject, setShowAddProject] = useState(false);
-  const [saveError, setSaveError] = useState(false);
-  const [saveStatus, setSaveStatus] = useState("saved"); // idle | saving | saved
-  const [lastSaved, setLastSaved] = useState(null);
+  const [saveError, setSaveError] = useState(false); // errores de acciones puntuales (crear, importar…)
+  const [hideMigrationHint, setHideMigrationHint] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null); // { id, name } | null
   const [editingProject, setEditingProject] = useState(null); // project object | null
   const [managingMembers, setManagingMembers] = useState(null); // project object | null
@@ -125,176 +130,40 @@ function Dashboard({ session }) {
     })();
   }, []);
 
-  const loadProjectData = useCallback(async (id) => {
-    try {
-      const { data, error } = await supabase.from("project_data").select("*").eq("project_id", id).maybeSingle();
-      if (error) throw error;
-      if (data) {
-        setProjectData((prev) => ({ ...prev, [id]: ensureFullProjectData({ upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos, balance: data.balance, info: data.info }) }));
-      } else {
-        const fresh = emptyProjectData();
-        await supabase.from("project_data").insert({
-          project_id: id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, balance: fresh.balance, info: fresh.info, updated_by: user.id,
-        });
-        setProjectData((prev) => ({ ...prev, [id]: fresh }));
-      }
-    } catch {
-      setProjectData((prev) => ({ ...prev, [id]: emptyProjectData() }));
-    }
-  }, [user.id]);
-
-  // Load selected project's data when selection changes
+  // Load selected project's data when selection changes (si falló, se reintenta con el botón, no solo)
   useEffect(() => {
-    if (!selectedId) return;
-    if (projectData[selectedId]) return;
+    if (!selectedId || projectData[selectedId] || loadErrors[selectedId]) return;
     loadProjectData(selectedId);
-  }, [selectedId, projectData, loadProjectData]);
+  }, [selectedId, projectData, loadErrors, loadProjectData]);
 
   // Overview needs every project's data loaded
   useEffect(() => {
     if (view !== "overview") return;
-    const missing = projects.filter((p) => !projectData[p.id]);
+    const missing = projects.filter((p) => !projectData[p.id] && !loadErrors[p.id]);
     missing.forEach((p) => loadProjectData(p.id));
-  }, [view, projects, projectData, loadProjectData]);
+  }, [view, projects, projectData, loadErrors, loadProjectData]);
 
-  // Realtime: reflect teammates' changes without a manual refresh — but never for the project
-  // the person has open right now, since a self-echoed refresh could race with a pending save
-  // and silently revert an edit (this was the "se ve guardado pero al reabrir no está" bug).
-  const selectedIdRef = useRef(null);
-  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
-
+  // Realtime de la lista de proyectos (los datos de cada proyecto los sincroniza useProjectSync).
   useEffect(() => {
     const channel = supabase
-      .channel("crm-realtime")
+      .channel("crm-projects")
       .on("postgres_changes", { event: "*", schema: "public", table: "projects" }, () => {
         supabase.from("projects").select("*").order("created_at", { ascending: true }).then(({ data }) => {
           if (data) setProjects(data.map(rowToProject));
-        });
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "project_data" }, (payload) => {
-        const pid = payload.new?.project_id || payload.old?.project_id;
-        if (!pid) return;
-        if (pid === selectedIdRef.current) return; // evita pisar lo que la persona está editando ahora mismo
-        supabase.from("project_data").select("*").eq("project_id", pid).maybeSingle().then(({ data }) => {
-          if (data) setProjectData((prev) => ({ ...prev, [pid]: ensureFullProjectData(data) }));
         });
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const persistProjectData = useCallback(async (id, data, attempt = 1) => {
-    setSaveStatus("saving");
-    const { data: saved, error } = await supabase
-      .from("project_data")
-      .upsert({
-        project_id: id,
-        upme: data.upme,
-        energizacion: data.energizacion,
-        cronograma: data.cronograma,
-        presupuesto: data.presupuesto,
-        pagos: data.pagos,
-        balance: data.balance,
-        info: data.info,
-        updated_at: new Date().toISOString(),
-        updated_by: user.id,
-      })
-      .select()
-      .maybeSingle();
-    if (error || !saved) {
-      console.error("Error guardando project_data:", error?.message || "upsert no devolvió la fila guardada (posible bloqueo de permisos)");
-      if (attempt < 3) {
-        await new Promise((r) => setTimeout(r, 600 * attempt));
-        return persistProjectData(id, data, attempt + 1);
-      }
-      setSaveError(true);
-      setSaveStatus("idle");
-    } else {
-      setSaveStatus("saved");
-      setLastSaved(new Date());
-      logProjectHistory(id, data);
-    }
-  }, [user.id]);
+  const saveNow = useCallback(() => retryNow(), [retryNow]);
 
-  // Historial de cambios: guarda una foto del proyecto en cada guardado exitoso, para poder ver
-  // después quién cambió qué y cuándo. Para no llenar la tabla con una fila por cada guardado
-  // debounced (cada 700ms mientras alguien escribe), si la persona ya tiene una entrada de los
-  // últimos 15 minutos, la actualiza en vez de crear una nueva — "best effort": si esto falla no
-  // debe afectar el guardado principal del proyecto.
-  const logProjectHistory = useCallback(async (id, data) => {
-    try {
-      const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-      const { data: recent } = await supabase
-        .from("project_history")
-        .select("id, updated_by, created_at")
-        .eq("project_id", id)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const snapshot = { upme: data.upme, energizacion: data.energizacion, cronograma: data.cronograma, presupuesto: data.presupuesto, pagos: data.pagos, balance: data.balance, info: data.info };
-      if (recent && recent.updated_by === user.id && recent.created_at > cutoff) {
-        await supabase.from("project_history").update({ data: snapshot, created_at: new Date().toISOString() }).eq("id", recent.id);
-      } else {
-        await supabase.from("project_history").insert({ project_id: id, data: snapshot, updated_by: user.id, updated_by_email: user.email });
-      }
-    } catch {
-      // silencioso a propósito
-    }
-  }, [user.id, user.email]);
-
-  // Agrupa varios cambios rápidos (p. ej. escribir en un campo de texto) en un solo guardado,
-  // en vez de mandar una petición a Supabase por cada tecla — eso era lo que causaba los
-  // "No se pudo guardar" al escribir rápido.
-  const saveTimers = useRef({});
-  const pendingData = useRef({});
-  const debouncedPersist = useCallback((id, data) => {
-    pendingData.current[id] = data;
-    if (saveTimers.current[id]) clearTimeout(saveTimers.current[id]);
-    saveTimers.current[id] = setTimeout(() => {
-      const toSave = pendingData.current[id];
-      delete pendingData.current[id];
-      delete saveTimers.current[id];
-      persistProjectData(id, toSave);
-    }, 700);
-  }, [persistProjectData]);
-
-  const saveNow = useCallback(async () => {
-    if (selectedId && saveTimers.current[selectedId]) {
-      clearTimeout(saveTimers.current[selectedId]);
-      delete saveTimers.current[selectedId];
-    }
-    const toSave = (selectedId && pendingData.current[selectedId]) || projectData[selectedId];
-    if (selectedId && pendingData.current[selectedId]) delete pendingData.current[selectedId];
-    if (selectedId && toSave) {
-      await persistProjectData(selectedId, toSave);
-    }
-  }, [selectedId, projectData, persistProjectData]);
-
-  const updateProjectData = (id, updater) => {
-    setSaveStatus("saving");
-    setProjectData((prev) => {
-      const current = prev[id] || emptyProjectData();
-      const next = updater(current);
-      debouncedPersist(id, next);
-      return { ...prev, [id]: next };
-    });
+  // Antes de cerrar sesión, guardar lo pendiente mientras el token todavía sirve.
+  const signOut = async () => {
+    await flushAll();
+    if (hasUnsaved() && !window.confirm("Hay cambios que no se pudieron guardar. Si cierras sesión ahora se pierden. ¿Cerrar sesión de todas formas?")) return;
+    await supabase.auth.signOut();
   };
-
-  // Guarda cualquier cambio pendiente si la persona cierra o cambia de pestaña
-  useEffect(() => {
-    const flushAll = () => {
-      Object.keys(saveTimers.current).forEach((id) => {
-        clearTimeout(saveTimers.current[id]);
-        const toSave = pendingData.current[id];
-        if (toSave) persistProjectData(id, toSave);
-      });
-    };
-    window.addEventListener("beforeunload", flushAll);
-    return () => {
-      window.removeEventListener("beforeunload", flushAll);
-      flushAll();
-    };
-  }, [persistProjectData]);
 
   // cloneFrom: null, o { sourceProjectId, modules: { upme, energizacion, cronograma, presupuesto, pagos, balance } }
   // — cada módulo marcado se copia tal cual del proyecto de origen (con ids nuevos); los que no se
@@ -324,10 +193,11 @@ function Dashboard({ session }) {
       if (mods.pagos) fresh.pagos = clonePagosState(src.pagos);
       if (mods.balance) fresh.balance = cloneBalanceState(src.balance);
     }
-    await supabase.from("project_data").insert({
+    const { data: insertedRow, error: insertError } = await supabase.from("project_data").insert({
       project_id: newProject.id, upme: fresh.upme, energizacion: fresh.energizacion, cronograma: fresh.cronograma, presupuesto: fresh.presupuesto, pagos: fresh.pagos, balance: fresh.balance, info: fresh.info, updated_by: user.id,
-    });
-    setProjectData((prev) => ({ ...prev, [newProject.id]: fresh }));
+    }).select().maybeSingle();
+    if (insertError || !insertedRow) setSaveError(true);
+    else setProjectRow(newProject.id, insertedRow);
     setSelectedId(newProject.id);
     setView("project");
     setShowAddProject(false);
@@ -340,9 +210,10 @@ function Dashboard({ session }) {
   };
 
   const deleteProject = async (id) => {
-    await supabase.from("projects").delete().eq("id", id);
+    const { data: deleted, error } = await supabase.from("projects").delete().eq("id", id).select("id");
+    if (error || !deleted?.length) { setSaveError(true); return; } // RLS lo rechazó: no quitarlo de la pantalla
     setProjects((prev) => prev.filter((p) => p.id !== id));
-    setProjectData((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    forgetProject(id);
     if (selectedId === id) setSelectedId(null);
   };
 
@@ -375,8 +246,8 @@ function Dashboard({ session }) {
   // Real file download — works normally here (this is a regular website, not a sandboxed artifact)
   const exportData = async () => {
     const missing = projects.filter((p) => !projectData[p.id]);
-    for (const p of missing) await loadProjectData(p.id);
-    const bundle = { exportedAt: new Date().toISOString(), projects, projectData };
+    await Promise.all(missing.map((p) => loadProjectData(p.id)));
+    const bundle = { exportedAt: new Date().toISOString(), projects, projectData: getProjectData() };
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -397,12 +268,13 @@ function Dashboard({ session }) {
       if (error || !inserted) continue;
       const pd = bundle.projectData?.[p.id] ? ensureFullProjectData(bundle.projectData[p.id]) : emptyProjectData();
       await supabase.from("project_data").upsert({
-        project_id: inserted.id, upme: pd.upme, energizacion: pd.energizacion, cronograma: pd.cronograma, presupuesto: pd.presupuesto, pagos: pd.pagos, updated_by: user.id,
+        project_id: inserted.id, upme: pd.upme, energizacion: pd.energizacion, cronograma: pd.cronograma, presupuesto: pd.presupuesto, pagos: pd.pagos, balance: pd.balance, info: pd.info, updated_by: user.id,
       });
     }
     const { data } = await supabase.from("projects").select("*").order("created_at", { ascending: true });
     if (data) setProjects(data.map(rowToProject));
-    setProjectData({});
+    await flushAll();
+    forgetAll();
     setView("overview");
   };
 
@@ -462,7 +334,7 @@ function Dashboard({ session }) {
           onImportFile={importData}
           onImportText={() => setShowImportText(true)}
           userEmail={user.email}
-          onSignOut={() => supabase.auth.signOut()}
+          onSignOut={signOut}
           myFullName={myFullName}
           onEditName={() => setShowEditNameModal(true)}
           isAdmin={isAdmin}
@@ -528,7 +400,16 @@ function Dashboard({ session }) {
               )}
               <div style={styles.content} className={tabReadOnly ? "readonly-gate" : undefined}>
                 {!data ? (
-                  <div style={{ color: "#8B9AA3", padding: 40 }}>Cargando proyecto…</div>
+                  loadErrors[selectedId] ? (
+                    <div style={{ color: "#E2604F", padding: 40, fontSize: 13.5 }}>
+                      No se pudieron cargar los datos de este proyecto. Para no arriesgar la información guardada, no se puede editar hasta que cargue bien.
+                      <div style={{ marginTop: 12 }}>
+                        <button style={styles.pdfBtn} onClick={() => loadProjectData(selectedId, { force: true })}>Reintentar</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ color: "#8B9AA3", padding: 40 }}>Cargando proyecto…</div>
+                  )
                 ) : tab === "resumen" ? (
                   <Resumen
                     data={data}
@@ -698,6 +579,28 @@ function Dashboard({ session }) {
       )}
       {showImportText && (
         <ImportTextModal onClose={() => setShowImportText(false)} onImport={importFromText} />
+      )}
+      {conflict && (
+        <ConflictModal
+          conflict={conflict}
+          projectName={projects.find((p) => p.id === conflict.projectId)?.name || "este proyecto"}
+          localData={projectData[conflict.projectId]}
+          onResolve={resolveConflict}
+        />
+      )}
+      {saveStatus === "error" && (
+        <div className="no-print" style={{ ...styles.saveError, bottom: saveError ? 80 : 20 }}>
+          No se pudieron guardar tus últimos cambios. Siguen en esta pantalla y se reintenta solo; no cierres la pestaña.
+          <button onClick={saveNow} style={{ ...styles.saveErrorClose, textDecoration: "underline", whiteSpace: "nowrap" }}>
+            Reintentar
+          </button>
+        </div>
+      )}
+      {versioned === false && isAdmin && !hideMigrationHint && (
+        <div className="no-print" style={{ ...styles.saveError, bottom: "auto", top: 20, background: "#2E2815", borderColor: "#F5B942" }}>
+          Falta correr supabase/proteger_datos.sql en Supabase: sin eso no se detectan conflictos entre editores ni se guarda el historial en el servidor.
+          <button onClick={() => setHideMigrationHint(true)} style={styles.saveErrorClose}><X size={14} /></button>
+        </div>
       )}
       {saveError && (
         <div className="no-print" style={styles.saveError}>
@@ -1212,11 +1115,17 @@ function Header({ project, tab, setTab, saveStatus, lastSaved, onSaveNow, onExpo
 
 function SaveIndicator({ status, lastSaved, onSaveNow }) {
   const label =
-    status === "saving" ? "Guardando…" : lastSaved ? `Guardado ${fmtTime(lastSaved)}` : "Guardado";
+    status === "saving" ? "Guardando…"
+      : status === "error" ? "Sin guardar — reintentar"
+      : status === "conflict" ? "Conflicto sin resolver"
+      : lastSaved ? `Guardado ${fmtTime(lastSaved)}` : "Guardado";
+  const failed = status === "error" || status === "conflict";
   return (
-    <button style={styles.saveBtn} onClick={onSaveNow} title="Forzar guardado ahora">
+    <button style={{ ...styles.saveBtn, ...(failed ? { borderColor: "#E2604F", background: "#E2604F" } : {}) }} onClick={onSaveNow} title="Forzar guardado ahora">
       {status === "saving" ? (
         <Loader2 size={13} className="spin" />
+      ) : failed ? (
+        <AlertTriangle size={13} color="#FFFFFF" />
       ) : (
         <Save size={13} color="#5FBF8F" />
       )}
@@ -4785,10 +4694,10 @@ function HistoryModal({ project, onClose }) {
     (async () => {
       const { data, error } = await supabase
         .from("project_history")
-        .select("id, data, updated_by_email, created_at")
+        .select("*") // "*" para no fallar si changed_modules aún no existe (falta proteger_datos.sql)
         .eq("project_id", project.id)
         .order("created_at", { ascending: false })
-        .limit(30);
+        .limit(50);
       if (cancelled) return;
       if (error) setError(true);
       else setRows(data || []);
@@ -4832,7 +4741,14 @@ function HistoryModal({ project, onClose }) {
                 onClick={() => downloadSnapshot(r)}
                 title="Descargar esta versión como JSON"
               >
-                <span>{fmtDateTime(new Date(r.created_at))}</span>
+                <span>
+                  {fmtDateTime(new Date(r.created_at))}
+                  {r.changed_modules?.length ? (
+                    <span style={{ display: "block", color: OVERVIEW_LIGHT.textSecondary, fontSize: 11 }}>
+                      {r.changed_modules.map((m) => MODULE_LABELS[m] || m).join(", ")}
+                    </span>
+                  ) : null}
+                </span>
                 <span style={{ color: OVERVIEW_LIGHT.textSecondary, fontSize: 11.5 }}>{r.updated_by_email || "—"}</span>
               </button>
             ))}
@@ -5281,6 +5197,62 @@ function ConfirmModal({ title, message, confirmLabel, onCancel, onConfirm }) {
         <div style={styles.confirmBtnRow}>
           <button style={styles.confirmCancelBtn} onClick={onCancel}>Cancelar</button>
           <button style={styles.confirmDangerBtn} onClick={onConfirm}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Alguien más guardó el mismo módulo mientras esta persona lo editaba (ver useProjectSync). No se
+// guarda nada hasta que se elija qué versión queda; se puede descargar la propia antes de decidir.
+function ConflictModal({ conflict, projectName, localData, onResolve }) {
+  const [who, setWho] = useState("");
+  const row = conflict.serverRow;
+  const labels = conflict.modules.map((m) => MODULE_LABELS[m] || m).join(", ");
+
+  useEffect(() => {
+    if (!row?.updated_by) return;
+    let cancelled = false;
+    supabase.from("profiles").select("full_name, email").eq("id", row.updated_by).maybeSingle().then(({ data }) => {
+      if (!cancelled && data) setWho(data.full_name || data.email || "");
+    });
+    return () => { cancelled = true; };
+  }, [row?.updated_by]);
+
+  const downloadMine = () => {
+    const mine = {};
+    conflict.modules.forEach((m) => { mine[m] = localData?.[m]; });
+    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), project: projectName, modules: mine }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `mis-cambios-${projectName.replace(/[^a-z0-9]+/gi, "-")}-${todayISO()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div style={styles.modalOverlay}>
+      <div style={styles.modal}>
+        <div style={styles.modalHead}>
+          <h3 style={styles.h3}>Otra persona editó lo mismo</h3>
+        </div>
+        <p style={styles.confirmMsg}>
+          {who || "Alguien"} guardó cambios en <b>{labels}</b> de "{projectName}"
+          {row?.updated_at ? ` (${fmtDateTime(new Date(row.updated_at))})` : ""} mientras tú lo editabas.
+          Para no borrar el trabajo de nadie, tus cambios en {conflict.modules.length > 1 ? "esos módulos" : "ese módulo"} no se han guardado todavía.
+        </p>
+        <p style={styles.confirmMsg}>
+          Si no estás seguro, descarga primero tus cambios como respaldo.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <button style={styles.exportOptionBtn} onClick={downloadMine}>Descargar mis cambios (JSON)</button>
+          <button style={styles.exportOptionBtn} onClick={() => onResolve("server")} disabled={!row}>
+            Ver la versión de la otra persona (descarta mis cambios en {labels})
+          </button>
+          <button style={{ ...styles.exportOptionBtn, color: "#C0392B" }} onClick={() => onResolve("mine")}>
+            Guardar mi versión encima (reemplaza lo que guardó la otra persona)
+          </button>
         </div>
       </div>
     </div>

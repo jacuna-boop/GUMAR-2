@@ -69,13 +69,20 @@ chicos para facilidad de mantenimiento, adelante, es una mejora razonable a cons
   (ej. `Array.isArray(rawPagos.ordenes)`) antes de aceptarlo, si no cae a `emptyXState()`. Si agregas un
   campo nuevo a algún módulo, sigue este mismo patrón o vas a romper proyectos existentes con pantalla en
   negro (ya pasó dos veces).
-- **Guardado con debounce**: `updateProjectData` en `Dashboard` no guarda en cada tecla — usa un debounce
-  de 700ms por proyecto (`saveTimers`/`pendingData` refs) para no saturar Supabase. Al guardar, se hace
-  `.select().maybeSingle()` después del upsert para detectar escrituras "fantasma" (0 filas afectadas por
-  RLS) que de otra forma parecen exitosas pero no persisten.
-- **Realtime**: hay una suscripción a `postgres_changes` en `projects` y `project_data`, pero se
-  **ignora explícitamente** para el proyecto que la persona tiene abierto en ese momento
-  (`selectedIdRef`), para evitar que un eco de tu propio guardado sobrescriba una edición en curso.
+- **Guardado por módulo** (`src/hooks/useProjectSync.js`, lógica pura en `src/lib/sync.js`): debounce de
+  700ms por proyecto, y solo se guardan las columnas de los módulos que cambiaron (nunca las 7 — antes
+  editar UPME pisaba los Pagos que otra persona acababa de guardar). Varias personas editan el mismo
+  proyecto a la vez, así que con la migración `supabase/proteger_datos.sql` cada módulo tiene versión
+  (`project_data.module_versions`) y se guarda vía `rpc('save_project_modules')`, que rechaza el guardado
+  si alguien más guardó ese módulo después → `ConflictModal` pregunta qué versión queda. Sin la migración
+  la app cae a "modo sin versionado" (update por columna, sin detección de conflictos).
+  Si la carga de un proyecto falla, NO se rellena con datos vacíos (eso guardaba un proyecto vacío
+  encima del real): queda en error con botón Reintentar.
+- **Realtime**: `project_data` se sincroniza módulo por módulo también para el proyecto abierto: se traen
+  los módulos con versión más nueva que no tengan cambios locales pendientes (`planServerMerge`).
+- **Historial**: lo escribe un trigger en el servidor (`log_project_history`, ventanas fijas de 10 min por
+  persona, con `changed_modules`). La app ya no puede escribir ni editar `project_history`. Un trigger
+  `bump_module_versions` sube la versión aunque el cambio venga del SQL Editor, así la app no lo pisa.
 - **Vinculación Presupuesto base ↔ ejecución**: los ítems comparten el mismo `id` entre ambas listas
   cuando se crean desde "base". Borrar un ítem de base también borra su par en ejecución *solo si* ese
   par sigue en $0 (nadie ha registrado nada real todavía).
