@@ -121,14 +121,16 @@ export default function CronogramaGantt({ tasks }) {
           </svg>
 
           <div style={{ position: "relative" }}>
-            {tasks.map((t, i) => {
+            {tasks.map((t) => {
               if (!t.fechaInicio || !t.fechaFin) return <div key={t.id} style={{ height: ROW_H }} />;
               const left = xOf(t.fechaInicio);
               const right = Math.max(left + 2, xOf(t.fechaFin));
               const isMilestone = t.fechaInicio === t.fechaFin;
               const isCritical = critical.has(t.id);
               const barColor = t.esGrupo ? "#F5B942" : isCritical ? "#E2604F" : "#4FA8D8";
-              const top = i * ROW_H + (t.esGrupo ? 6 : 5);
+              // Cada barra va dentro de su propia fila (position: relative), así que "top" es relativo a
+              // la fila — sumarle i * ROW_H la desplazaba el doble y no coincidía con etiquetas ni flechas.
+              const top = t.esGrupo ? 6 : 5;
               const barH = t.esGrupo ? ROW_H - 12 : ROW_H - 10;
 
               return (
@@ -136,7 +138,7 @@ export default function CronogramaGantt({ tasks }) {
                   {isMilestone ? (
                     <div
                       style={{
-                        position: "absolute", left: left - 5, top: i * ROW_H + ROW_H / 2 - 5,
+                        position: "absolute", left: left - 5, top: ROW_H / 2 - 5,
                         width: 10, height: 10, transform: "rotate(45deg)",
                         background: isCritical ? "#E2604F" : "#7FD08A",
                       }}
