@@ -200,7 +200,7 @@ export function CargosModal({ myUserId, onClose }) {
                 {cargos.map((c) => {
                   const isOpen = expandedCargoId === c.id;
                   return (
-                    <div key={c.id} style={{ background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 8, overflow: "hidden" }}>
+                    <div key={c.id} style={{ background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 8, overflow: "hidden", flexShrink: 0 /* si no, con varios cargos la tarjeta abierta se aplasta y corta las casillas de Pagos y Administración */ }}>
                       <div
                         style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 10px 10px 6px", cursor: "pointer" }}
                         onClick={() => setExpandedCargoId(isOpen ? null : c.id)}
