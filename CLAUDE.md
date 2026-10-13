@@ -42,25 +42,37 @@ varios proyectos de parques solares en simultáneo, a través de 6 módulos por 
 
 ```
 src/
-  App.jsx              # TODO el UI vive aquí (un solo archivo grande, a propósito — ver nota abajo)
-  main.jsx             # entry point
-  index.css            # estilos globales + media queries de impresión/responsive
+  App.jsx                # App (auth gate) + Dashboard: estado, navegación, CRUD de proyectos, modales
+  main.jsx               # entry point
+  index.css              # estilos globales + media queries de impresión/responsive
+  theme.js               # colores y tipografías (BRAND_*, OVERVIEW_LIGHT, FONT_*)
+  styles.js              # objetos de estilo inline (styles) y de impresión (prCard)
+  hooks/
+    useProjectSync.js    # carga/guardado por módulo, conflictos, realtime de project_data
+  components/            # piezas compartidas: Sidebar, Header, GlobalStyle, AttachmentsButton,
+                         # common.jsx (MoneyInput, MiniBar, OvBar…), CronogramaGantt, Login
+  modules/               # una pestaña por archivo: Resumen, ResumenGeneral, Upme, Energizacion,
+                         # Cronograma, Presupuesto (incl. Flujo de caja y Costo real), Pagos, Balance
+  modals/                # ProjectFormModal, HistoryModal, ConflictModal, InformePPI01Modal,
+                         # admin.jsx (miembros, cargos, nombre), dialogs.jsx (confirmar, exportar, importar)
+  print/PrintViews.jsx   # vistas imprimibles (Exportar PDF)
   lib/
-    data.js            # constantes de negocio (UPME_STEPS, ENERGIZACION_GROUPS...) + funciones puras
-                        # (cálculos de progreso, parsers de "pegar desde Excel/Project", helpers de fecha)
-    supabaseClient.js   # cliente de Supabase (lee VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)
-  components/
-    Login.jsx           # pantalla de login/signup con Supabase Auth
+    data.js              # constantes de negocio + funciones puras (cálculos, parsers, fechas)
+    sync.js              # funciones puras del guardado por módulo (con tests)
+    permisos.js          # TAB_PERM_KEY, TAB_LABELS, casillas de cargos
+    excelTemplates.js    # plantillas Excel de Pagos/Presupuesto (descargar y leer)
+    excelRead.js         # lectura de .xlsx con exceljs
+    informePPI01*.js, excelNativeChart.js  # informe PP-I-01 en Excel
+    supabaseClient.js    # cliente de Supabase (lee VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)
 supabase/
-  schema.sql             # esquema completo (para instalaciones nuevas) — OJO: no siempre refleja
-                          # migraciones incrementales que se corrieron directo en el SQL Editor de
-                          # Supabase (ver "Migraciones pendientes de documentar" abajo)
+  schema.sql             # esquema completo para instalaciones nuevas (incluye proteger_datos.sql y
+                         # seguridad_permisos.sql al final)
+  *.sql                  # migraciones incrementales que se corrieron a mano en el SQL Editor
 ```
 
-**Nota sobre `App.jsx` siendo un solo archivo enorme:** fue deliberado durante el desarrollo iterativo
-vía chat (evitar wiring de imports entre muchos archivos pequeños cuando cada cambio se pegaba a mano).
-Con Claude Code ya no aplica esa restricción — si tiene sentido dividirlo en componentes/archivos más
-chicos para facilidad de mantenimiento, adelante, es una mejora razonable a considerar.
+`exceljs` (~1 MB) se carga de forma diferida (`import()`), solo cuando alguien genera o lee un Excel.
+No lo importes de forma estática o vuelve al paquete inicial. Para revisar que no falten imports tras
+mover código: `npm run build` no lo detecta; renderiza la pestaña o corre ESLint con `no-undef`.
 
 ## Convenciones importantes del modelo de datos
 
