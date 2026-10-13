@@ -117,9 +117,11 @@ debe agregarse también al final de `schema.sql`**, o estas pruebas no la ven.
 
 ## Cómo se despliega
 
-1. Cambios de código → commit + push a la rama `main` del repo de GitHub conectado a Vercel
-   (`jacuna-boop/GUMAR-2`).
-2. Vercel detecta el push y despliega solo a `gumar-2.vercel.app`.
+1. Cambios de código → rama nueva + PR contra `main` del repo de GitHub conectado a Vercel
+   (`jacuna-boop/GUMAR-2`). Vercel crea una URL de preview por PR.
+   **`main` está protegida**: no se puede hacer push directo, y un PR no se puede fusionar hasta que
+   la revisión automática ("revision", ver arriba) pase en verde — también para admins.
+2. Al fusionar el PR, Vercel despliega solo a `gumar-2.vercel.app`.
 3. Cambios de **esquema de base de datos** (columnas nuevas, etc.) van aparte, corridos a mano en
    Supabase → SQL Editor. **Esto no se automatiza** — si agregas un campo nuevo al modelo de datos que
    requiere columna nueva, dile a Juan el SQL exacto para correr, o dile explícitamente que no hace falta
