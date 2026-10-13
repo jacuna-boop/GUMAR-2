@@ -3,7 +3,7 @@ import React, { useRef, useState } from "react";
 import { AlertTriangle, FileDown, FileUp, Plus, Search, Trash2, X } from "lucide-react";
 import { styles } from "../styles.js";
 import { BRAND_DARK, FONT_BRAND_BODY, FONT_BRAND_DISPLAY, OVERVIEW_LIGHT } from "../theme.js";
-import { downloadPagosTemplate, parsePagosWorkbook } from "../lib/excelTemplates.js";
+import { downloadPagosTemplate, mergeImportedOrdenes, parsePagosWorkbook } from "../lib/excelTemplates.js";
 import { MoneyInput, OvBar, PresupuestoItemSelect } from "../components/common.jsx";
 import { ConfirmModal } from "../modals/dialogs.jsx";
 
@@ -162,7 +162,7 @@ export function PagosModule({ data, onChange, projectName, presupuestoBase = [],
       </div>
 
       {showTemplateUpload && (
-        <PagosTemplateModal onClose={() => setShowTemplateUpload(false)} onImport={(ordenes) => { onChange({ ...data, ordenes }); setShowTemplateUpload(false); }} />
+        <PagosTemplateModal existingOrdenes={data.ordenes} canAprobarPagos={canAprobarPagos} onClose={() => setShowTemplateUpload(false)} onImport={(ordenes) => { onChange({ ...data, ordenes }); setShowTemplateUpload(false); }} />
       )}
 
       {showRangeExport && (
@@ -549,7 +549,7 @@ export function PagosRangeExportModal({ onClose, onExport }) {
   );
 }
 
-export function PagosTemplateModal({ onClose, onImport }) {
+export function PagosTemplateModal({ existingOrdenes = [], canAprobarPagos = false, onClose, onImport }) {
   const fileInputRef = useRef(null);
   const [fileName, setFileName] = useState("");
   const [preview, setPreview] = useState(null); // { ordenes, skipped, totalPagos } | null
@@ -561,9 +561,10 @@ export function PagosTemplateModal({ onClose, onImport }) {
     setPreview(null);
     try {
       const buf = await file.arrayBuffer();
-      const { ordenes, skipped } = await parsePagosWorkbook(buf);
+      const { ordenes: leidas, skipped } = await parsePagosWorkbook(buf);
+      const { ordenes, amarresConservados, aprobacionesConservadas, aprobadosEliminados } = mergeImportedOrdenes(existingOrdenes, leidas);
       const totalPagos = ordenes.reduce((s, o) => s + o.pagos.length, 0);
-      setPreview({ ordenes, skipped, totalPagos });
+      setPreview({ ordenes, skipped, totalPagos, amarresConservados, aprobacionesConservadas, aprobadosEliminados });
     } catch (err) {
       console.error("Error leyendo plantilla de pagos:", err);
       setError(`No se pudo leer ese archivo. ¿Es un .xlsx válido? (${err?.message || "error desconocido"})`);
@@ -579,7 +580,8 @@ export function PagosTemplateModal({ onClose, onImport }) {
         </div>
         <p style={styles.exportHint}>
           Sube el archivo .xlsx que descargaste y llenaste. Esto <strong>reemplaza todas las órdenes de servicio</strong> de
-          este proyecto por lo que traiga el archivo — descarga la plantilla actual primero si no quieres perder nada.
+          este proyecto por lo que traiga el archivo. Las órdenes con el mismo número conservan sus amarres al
+          presupuesto, y los pagos con la misma fecha y valor conservan su aprobación.
         </p>
         <input
           ref={fileInputRef}
@@ -597,12 +599,22 @@ export function PagosTemplateModal({ onClose, onImport }) {
             <div style={styles.pastePreview}>
               Se detectaron <strong>{preview.ordenes.length}</strong> órdenes con <strong>{preview.totalPagos}</strong> pagos en total.
               {preview.skipped > 0 && <> Se ignoraron {preview.skipped} filas sin número de orden.</>}
+              {(preview.amarresConservados > 0 || preview.aprobacionesConservadas > 0) && (
+                <> Se conservan los amarres al presupuesto de {preview.amarresConservados} órdenes y {preview.aprobacionesConservadas} aprobaciones de pagos.</>
+              )}
             </div>
+            {preview.aprobadosEliminados > 0 && (
+              <div style={styles.importError}>
+                {preview.aprobadosEliminados} {preview.aprobadosEliminados === 1 ? "pago aprobado no está" : "pagos aprobados no están"} en
+                el archivo (o cambiaron de fecha o valor) y se {preview.aprobadosEliminados === 1 ? "eliminaría" : "eliminarían"}.
+                {canAprobarPagos ? " Revisa antes de reemplazar." : " Solo quien tiene permiso de aprobar pagos puede hacerlo: corrige el archivo o pídeselo a esa persona."}
+              </div>
+            )}
             <div style={{ display: "flex", gap: 8 }}>
               <button style={styles.confirmCancelBtn} onClick={() => { setPreview(null); setFileName(""); }}>Elegir otro archivo</button>
               <button
-                style={{ ...styles.addProjectBtn, opacity: preview.ordenes.length ? 1 : 0.5 }}
-                disabled={!preview.ordenes.length}
+                style={{ ...styles.addProjectBtn, opacity: preview.ordenes.length && (canAprobarPagos || !preview.aprobadosEliminados) ? 1 : 0.5 }}
+                disabled={!preview.ordenes.length || (!canAprobarPagos && preview.aprobadosEliminados > 0)}
                 onClick={() => onImport(preview.ordenes)}
               >
                 Reemplazar con {preview.ordenes.length} órdenes

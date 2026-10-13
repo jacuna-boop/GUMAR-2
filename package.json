@@ -22,5 +22,10 @@
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.3.1",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   }
 }
