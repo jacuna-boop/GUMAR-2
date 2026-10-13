@@ -2,3 +2,8 @@ node_modules
 dist
 .env.local
 .DS_Store
+.env
+.env.*
+!.env.local.example
+supabase/.temp/
+.claude/settings.local.json
