@@ -3,7 +3,6 @@ import { supabase } from "../lib/supabaseClient";
 import gumarLogo from "../assets/gumar-logo.jpg";
 
 const BRAND_DARK = "#6B8E89";
-const BRAND_LIGHT = "#A9D3C4";
 
 // Solo el equipo de Gumar puede registrarse solo — esto es una primera valla en el navegador,
 // pero la de verdad está en el trigger handle_new_user() de la base de datos (ver schema.sql),

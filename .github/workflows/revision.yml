@@ -1,0 +1,32 @@
+# Revisión automática: corre en cada PR y en cada push a main. Si algo falla, el PR muestra la
+# marca roja con el detalle (pestaña "Checks" del PR).
+name: Revisión
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  revision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Revisar código (imports faltantes, reglas de hooks)
+        run: npm run lint
+
+      - name: Pruebas (app y SQL de Supabase en Postgres de prueba)
+        run: npm test
+
+      - name: Build
+        run: npm run build
