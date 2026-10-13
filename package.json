@@ -9,7 +9,12 @@
     "preview": "vite preview",
     "test": "vitest run",
     "lint": "eslint --ext .js,.jsx src supabase/tests",
-    "check": "npm run lint && npm test && npm run build"
+    "check": "npm run lint && npm test && npm run build",
+    "pruebas:iniciar": "npx -y supabase@2.98.2 start && node scripts/pruebas-env.mjs",
+    "pruebas:reiniciar-datos": "npx -y supabase@2.98.2 db reset --local",
+    "pruebas:detener": "npx -y supabase@2.98.2 stop",
+    "pruebas:generar-seed": "node scripts/generar-seed-pruebas.mjs",
+    "dev:pruebas": "vite --mode pruebas --port 5174 --strictPort"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

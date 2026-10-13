@@ -11,4 +11,10 @@ if (!url || !anonKey) {
   );
 }
 
+// "npm run dev:pruebas" (modo "pruebas") tiene que apuntar al Supabase LOCAL. Si falta
+// .env.pruebas.local, Vite caería en .env.local (producción) sin avisar: mejor detenerse.
+if (import.meta.env.MODE === "pruebas" && !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(url || "")) {
+  throw new Error("Modo pruebas sin Supabase local: corre npm run pruebas:iniciar (crea .env.pruebas.local). No se conecta a producción.");
+}
+
 export const supabase = createClient(url, anonKey);
