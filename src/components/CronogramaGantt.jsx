@@ -9,6 +9,8 @@ const LABEL_COL_W = 260;
 // predecesora/sucesora (como el Project original) y la ruta crítica resaltada en rojo. Usa las
 // fechas ya calculadas por computeCronogramaSchedule — este componente solo dibuja, no recalcula nada.
 export default function CronogramaGantt({ tasks }) {
+  // Antes de cualquier "return" (regla de hooks de React).
+  const critical = React.useMemo(() => computeCriticalPath(tasks), [tasks]);
   const withDates = tasks.filter((t) => t.fechaInicio && t.fechaFin);
   if (withDates.length === 0) {
     return <div style={{ color: "#DCEAE4", fontSize: 13, padding: "10px 0" }}>Agrega actividades con fechas para ver el Gantt.</div>;
@@ -27,7 +29,6 @@ export default function CronogramaGantt({ tasks }) {
     const did = (t.displayId || "").trim();
     if (did && !byDisplayId.has(did)) byDisplayId.set(did, i);
   });
-  const critical = computeCriticalPath(tasks);
 
   // Marcas de mes para el eje de tiempo superior
   const monthTicks = [];

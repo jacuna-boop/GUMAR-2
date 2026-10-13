@@ -2,7 +2,8 @@
 // que tiene vulnerabilidades sin parche). Devuelve las filas como objetos { encabezado: valor },
 // igual que hacía XLSX.utils.sheet_to_json(ws, { defval: "" }): la fila 1 son los encabezados,
 // las celdas vacías vienen como "" y las filas totalmente vacías se omiten.
-import ExcelJS from "exceljs";
+// exceljs pesa ~1 MB: se descarga solo cuando alguien genera o lee un Excel, no al abrir la app.
+const loadExcelJS = () => import("exceljs").then((m) => m.default);
 
 function cellValue(v) {
   if (v === null || v === undefined) return "";
@@ -19,6 +20,7 @@ function cellValue(v) {
 // preferredSheet: nombre de la hoja a leer; si no existe, la última del libro (las plantillas
 // traen "Instrucciones" primero).
 export async function readSheetRows(arrayBuffer, preferredSheet) {
+  const ExcelJS = await loadExcelJS();
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(arrayBuffer);
   const ws = wb.getWorksheet(preferredSheet) || wb.worksheets[wb.worksheets.length - 1];
