@@ -105,6 +105,16 @@ mover código: `npm run build` no lo detecta; renderiza la pestaña o corre ESLi
   cuando se crean desde "base". Borrar un ítem de base también borra su par en ejecución *solo si* ese
   par sigue en $0 (nadie ha registrado nada real todavía).
 
+## Revisión automática (GitHub Actions)
+
+`.github/workflows/revision.yml` corre en cada PR y en cada push a `main`: `npm run lint` (ESLint:
+imports faltantes y reglas de hooks), `npm test` y `npm run build`. Localmente: `npm run check`.
+
+`npm test` incluye `supabase/tests/`: cargan `supabase/schema.sql` completo en un Postgres real
+(PGlite) con imitaciones mínimas de Supabase (`auth.uid()` vía `set_config('test.uid', …)`, roles,
+storage) y prueban guardado/conflictos, permisos por módulo y restauración. **Toda migración nueva
+debe agregarse también al final de `schema.sql`**, o estas pruebas no la ven.
+
 ## Cómo se despliega
 
 1. Cambios de código → commit + push a la rama `main` del repo de GitHub conectado a Vercel
