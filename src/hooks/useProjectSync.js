@@ -336,6 +336,23 @@ export function useProjectSync(user) {
 
   const getProjectData = useCallback(() => dataRef.current, []);
 
+  // Restaura módulos desde una versión del historial (rpc restore_project_modules, ver
+  // supabase/restaurar_historial.sql). Primero guarda lo pendiente para no perderlo ni pisarlo, y
+  // después vuelve a leer el proyecto. Devuelve null si salió bien, o el mensaje de error.
+  const restoreFromHistory = useCallback(async (projectId, historyId, modules) => {
+    await flushAll();
+    if (paused.current[projectId]) return "Primero resuelve el conflicto de edición que está pendiente.";
+    if (dirty.current[projectId]?.size) return "Hay cambios sin guardar en este proyecto. Espera a que se guarden e intenta de nuevo.";
+    const { error } = await supabase.rpc("restore_project_modules", { p_history_id: historyId, p_modules: modules });
+    if (error) {
+      if (error.code === "PGRST202") return "Falta correr supabase/restaurar_historial.sql en Supabase.";
+      return error.message;
+    }
+    await loadProjectData(projectId, { force: true });
+    setLastSaved(new Date());
+    return null;
+  }, [flushAll, loadProjectData]);
+
   // Descarta lo que no se pudo guardar y vuelve a leer el proyecto del servidor.
   const discardAndReload = useCallback(async () => {
     const ids = Object.keys(dirty.current).filter((id) => dirty.current[id]?.size && !paused.current[id]);
@@ -374,6 +391,6 @@ export function useProjectSync(user) {
   return {
     projectData, getProjectData, loadErrors, loadProjectData, updateProjectData,
     saveStatus, saveErrorMessage, lastSaved, versioned, conflict, resolveConflict,
-    flushAll, retryNow, hasUnsaved, setProjectRow, forgetProject, forgetAll, discardAndReload,
+    flushAll, retryNow, hasUnsaved, setProjectRow, forgetProject, forgetAll, discardAndReload, restoreFromHistory,
   };
 }
