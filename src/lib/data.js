@@ -734,6 +734,40 @@ function ordenPresupuestoAsignado(orden) {
   return (orden.presupuestoItems || []).reduce((s, l) => s + (Number(l.valor) || 0), 0);
 }
 
+// Valor que se propone al amarrar una orden a un ítem sin escribir cuánto: lo que falta por asignar.
+// Antes se guardaba $0 y el ítem no sumaba nada en "Costo real" (pasó en FILIGRANA con 11 órdenes).
+function valorSugeridoAmarre(orden) {
+  return Math.max(0, (Number(orden?.valorTotal) || 0) - ordenPresupuestoAsignado(orden || {}));
+}
+
+// Cambiar el valor de una orden: si tiene un solo amarre que cubría toda la orden (o estaba en $0),
+// el amarre se ajusta al nuevo valor. Si está repartida entre varios ítems no se toca (no hay forma
+// de saber cómo repartir la diferencia) y queda marcada como descuadrada en "Costo real".
+function actualizarValorOrden(orden, nuevoValor) {
+  const anterior = Number(orden.valorTotal) || 0;
+  const valor = Number(nuevoValor) || 0;
+  const links = orden.presupuestoItems || [];
+  const sigue = links.length === 1 && [anterior, 0].includes(Number(links[0].valor) || 0);
+  return { ...orden, valorTotal: valor, ...(sigue ? { presupuestoItems: [{ ...links[0], valor }] } : {}) };
+}
+
+// Lo que hay que revisar en "Costo real": órdenes sin ningún ítem amarrado (no suman en ningún ítem, y
+// son la única razón por la que el total de Costo real no da igual al de Pagos) y órdenes repartidas
+// entre varios ítems cuyos valores asignados no suman el valor de la orden (se reparten en proporción).
+function ordenesDescuadradas(pagos) {
+  const descuadradas = [];
+  const sinAmarre = [];
+  (pagos?.ordenes || []).forEach((o) => {
+    const valorTotal = Number(o.valorTotal) || 0;
+    const items = new Set((o.presupuestoItems || []).filter((l) => l.itemId).map((l) => l.itemId));
+    if (items.size === 0) { if (valorTotal) sinAmarre.push(o); return; }
+    if (items.size === 1) return; // cargada a un solo ítem: cuenta completa, no hay nada que cuadrar
+    const asignado = ordenPresupuestoAsignado(o);
+    if (Math.abs(asignado - valorTotal) > 1) descuadradas.push({ orden: o, asignado, valorTotal, diferencia: valorTotal - asignado, items: items.size });
+  });
+  return { descuadradas, sinAmarre };
+}
+
 // Balance financiero del proyecto: hitos de pago esperados del cliente. Cada hito trae su fecha y
 // valor esperado; cuando el cliente consigna, se marca "pagado" y se registra la fecha/valor real
 // (pueden diferir de lo esperado) — de ahí sale la lista de "ingresos" reales, sin necesidad de una
@@ -1079,37 +1113,42 @@ function ordenSaldo(orden) {
   return (Number(orden.valorTotal) || 0) - ordenPagado(orden);
 }
 
-// Reparte lo realmente pagado de una orden (ordenPagado) proporcionalmente entre los ítems de
-// presupuesto que tiene amarrados, según la porción de la orden asignada a cada uno — es lo que se
-// muestra en la columna "Pagado (real)" de Presupuesto (tanto base como ejecución). Los pagos en sí
-// se registran a nivel de la orden completa, no por ítem, así que esto es un prorrateo, no un dato
-// exacto por ítem.
+// Cómo se reparte una orden entre los ítems de presupuesto que tiene amarrados:
+// - Cargada a UN solo ítem: le corresponde la orden completa (su valor total), sin importar lo que diga
+//   el "valor asignado" del amarre — así Costo real es la suma de las órdenes cargadas a cada ítem.
+// - Repartida entre VARIOS ítems: a cada uno le corresponde la parte asignada en el amarre (si todas
+//   están en $0, partes iguales).
+// Devuelve [{ itemId, fraccion }] con fracciones que suman 1.
+function repartoOrden(orden) {
+  const links = (orden.presupuestoItems || []).filter((l) => l.itemId);
+  const porItem = new Map();
+  links.forEach((l) => porItem.set(l.itemId, (porItem.get(l.itemId) || 0) + (Number(l.valor) || 0)));
+  const items = [...porItem.keys()];
+  if (items.length === 0) return [];
+  if (items.length === 1) return [{ itemId: items[0], fraccion: 1 }];
+  const total = [...porItem.values()].reduce((s, v) => s + v, 0);
+  return items.map((itemId) => ({ itemId, fraccion: total > 0 ? porItem.get(itemId) / total : 1 / items.length }));
+}
+
+// Lo realmente pagado de cada orden (ordenPagado) repartido entre sus ítems (ver repartoOrden) — es lo
+// que se muestra en la columna "Pagado (real)" de Presupuesto. Los pagos se registran por orden, no
+// por ítem, así que en órdenes repartidas es un prorrateo.
 function pagadoPorItemMap(pagos) {
   const map = new Map();
   (pagos?.ordenes || []).forEach((o) => {
-    const links = o.presupuestoItems || [];
-    const totalAsignado = ordenPresupuestoAsignado(o);
-    if (totalAsignado <= 0) return;
     const pagado = ordenPagado(o);
-    links.forEach((link) => {
-      if (!link.itemId) return;
-      const share = (Number(link.valor) || 0) / totalAsignado;
-      map.set(link.itemId, (map.get(link.itemId) || 0) + pagado * share);
-    });
+    repartoOrden(o).forEach(({ itemId, fraccion }) => map.set(itemId, (map.get(itemId) || 0) + pagado * fraccion));
   });
   return map;
 }
 
-// Costo real por ítem (pestaña "Costo real" de Presupuesto): para cada ítem, suma lo que le fue
-// asignado (presupuestoItems[].valor) en cada orden de servicio que lo tiene amarrado — el valor
-// completo de la orden amarrada, sin importar cuánto de esa orden se ha pagado o programado todavía.
+// Costo real por ítem (pestaña "Costo real" de Presupuesto): suma el valor de las órdenes de servicio
+// cargadas a cada ítem (ver repartoOrden), sin importar cuánto se ha pagado o programado todavía.
 function costoRealPorItemMap(pagos) {
   const map = new Map();
   (pagos?.ordenes || []).forEach((o) => {
-    (o.presupuestoItems || []).forEach((link) => {
-      if (!link.itemId) return;
-      map.set(link.itemId, (map.get(link.itemId) || 0) + (Number(link.valor) || 0));
-    });
+    const valor = Number(o.valorTotal) || 0;
+    repartoOrden(o).forEach(({ itemId, fraccion }) => map.set(itemId, (map.get(itemId) || 0) + valor * fraccion));
   });
   return map;
 }
@@ -2057,6 +2096,9 @@ export {
   ordenProgramado,
   ordenSaldo,
   ordenPresupuestoAsignado,
+  valorSugeridoAmarre,
+  actualizarValorOrden,
+  ordenesDescuadradas,
   migrateOrdenPresupuestoItems,
   pagadoPorItemMap,
   costoRealPorItemMap,
