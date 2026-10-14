@@ -25,6 +25,14 @@ export function GlobalStyle() {
         opacity: 1 !important;
       }
 
+      /* Aviso que aparece al pasar el mouse por un valor (p. ej. costo real que supera un ítem). */
+      .hover-aviso { cursor: help; border-bottom: 1px dotted currentColor; }
+      .hover-aviso-box {
+        position: fixed; z-index: 1000; width: 260px; padding: 8px 10px; border-radius: 6px;
+        background: #2E1520; color: #FFFFFF; font-size: 11.5px; font-weight: 400; line-height: 1.4;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.25); white-space: normal; text-align: left; pointer-events: none;
+      }
+
       .print-only { display: none; }
       @media print {
         body { background: #ffffff !important; }
