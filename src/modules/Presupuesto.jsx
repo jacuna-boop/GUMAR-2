@@ -1,9 +1,9 @@
 import React, { useRef, useState } from "react";
-import { buildFlujoCajaPeriodos, calcPresupuestoItem, costoRealPorItemMap, ordenesDescuadradas, flujoCajaSumaPct, flujoCajaTotalesPorPeriodo, fmtMoney, groupPresupuestoItems, pagadoPorItemMap, pagosTotals, parsePresupuestoPaste, presupuestoListTotal, presupuestoTotals, uid } from "../lib/data.js";
+import { buildFlujoCajaPeriodos, calcPresupuestoItem, costoRealPorItemMap, ordenesDescuadradas, flujoCajaSumaPct, flujoCajaTotalesPorPeriodo, fmtMoney, groupPresupuestoItems, pagosTotals, parsePresupuestoPaste, presupuestoListTotal, presupuestoTotals, uid } from "../lib/data.js";
 import { Bar, BarChart, CartesianGrid, Legend as RLegend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Check, ClipboardPaste, FileDown, FileUp, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { styles } from "../styles.js";
-import { BRAND_DARK, FONT_BRAND_BODY, OVERVIEW_LIGHT } from "../theme.js";
+import { BRAND_DARK, FONT_BRAND_BODY, FONT_MONO, OVERVIEW_LIGHT } from "../theme.js";
 import { downloadPresupuestoTemplate, parsePresupuestoWorkbook } from "../lib/excelTemplates.js";
 import { HoverAviso, MoneyInput } from "../components/common.jsx";
 import { ConfirmModal } from "../modals/dialogs.jsx";
@@ -12,12 +12,6 @@ export function PresupuestoModule({ data, onChange, pagos, projectName }) {
   const [activeSub, setActiveSub] = useState("base"); // "base" | "ejecucion"
   const [chartMode, setChartMode] = useState("categoria"); // "categoria" | "actividad"
   const totals = presupuestoTotals(data);
-
-  // Suma lo pagado (solo pagos en estado "pagado", no "programado") de las órdenes que la persona
-  // amarró a cada ítem del presupuesto desde la pestaña Pagos — para ver de un vistazo cuánto se ha
-  // pagado realmente hacia cada actividad. Una orden se puede repartir entre varios ítems, así que
-  // esto reparte lo pagado proporcionalmente (ver pagadoPorItemMap en data.js).
-  const pagadoPorItem = pagadoPorItemMap(pagos);
 
   // Costo real (valor de las órdenes amarradas, ver pestaña "Costo real") por ítem — se usa para
   // avisar en Presupuesto de ejecución cuándo un ítem quedó corto: si ya se contrató más de lo que
@@ -253,14 +247,13 @@ export function PresupuestoModule({ data, onChange, pagos, projectName }) {
       )}
 
       {activeSub === "base" ? (
-        <PresupuestoTable items={data.base} onAdd={addBaseItem} onAddMany={addBaseItems} onUpdate={updateBaseItem} onDelete={deleteBaseItem} pagadoPorItem={pagadoPorItem} projectName={projectName} />
+        <PresupuestoTable items={data.base} onAdd={addBaseItem} onAddMany={addBaseItems} onUpdate={updateBaseItem} onDelete={deleteBaseItem} projectName={projectName} />
       ) : activeSub === "ejecucion" ? (
         <PresupuestoTable
           items={data.ejecucion}
           onAdd={addEjecItem}
           onAddMany={addEjecItems}
           onUpdate={updateEjecItem}
-          pagadoPorItem={pagadoPorItem}
           onDelete={deleteEjecItem}
           linkedIds={baseIds}
           baseValoresPorItem={baseValoresPorItem}
@@ -448,54 +441,80 @@ export function CostoRealModule({ items, pagos }) {
   // Solo ítems que existen en la base: así el total coincide con la suma de las filas (los amarres a
   // ítems ya borrados no se ven en ninguna fila).
   const totalAmarrado = items.reduce((s, it) => s + (costoPorItem.get(it.id) || 0), 0);
+  const totalBase = items.reduce((s, it) => s + calcPresupuestoItem(it).valorTotal, 0);
   const totalOrdenes = pagosTotals(pagos).totalOrdenes;
   const { descuadradas, sinAmarre } = ordenesDescuadradas(pagos);
 
   const lightHint = { ...styles.exportHint, color: OVERVIEW_LIGHT.pageTextSecondary };
   const lightTableWrap = { ...styles.cronoTableWrap, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
   const lightOvTh = { ...styles.ovTh, color: OVERVIEW_LIGHT.textSecondary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
+  const num = { textAlign: "right", paddingRight: 28, fontFamily: FONT_MONO, whiteSpace: "nowrap" }; // columnas de valores
   const lightOvTd = { ...styles.ovTd, color: OVERVIEW_LIGHT.textPrimary, borderBottom: `1px solid ${OVERVIEW_LIGHT.border}` };
 
   return (
     <div>
       <p style={lightHint}>
         Costo real de cada ítem del presupuesto base, según el valor completo de las órdenes de servicio que
-        tiene amarradas en Pagos (no lo pagado ni lo programado). Es de solo lectura y no afecta el presupuesto
-        de ejecución, que se sigue digitando a mano.
+        tiene amarradas en Pagos (no lo pagado ni lo programado), y el saldo que queda: presupuesto base menos
+        costo real. Es de solo lectura y no afecta el presupuesto de ejecución, que se sigue digitando a mano.
       </p>
       <div style={lightTableWrap}>
-        <table style={styles.overviewTable}>
+        <table style={{ ...styles.overviewTable, tableLayout: "fixed" }}>
+          {/* Columnas parejas: el ítem ocupa el 40 % y cada valor un 20 %, alineados a la derecha. */}
+          <colgroup>
+            <col style={{ width: "40%" }} />
+            <col style={{ width: "20%" }} />
+            <col style={{ width: "20%" }} />
+            <col style={{ width: "20%" }} />
+          </colgroup>
           <thead>
             <tr>
               <th style={lightOvTh}>Ítem</th>
-              <th style={lightOvTh}>Costo real (órdenes amarradas)</th>
+              <th style={{ ...lightOvTh, ...num }}>Presupuesto base</th>
+              <th style={{ ...lightOvTh, ...num }}>Costo real (órdenes amarradas)</th>
+              <th style={{ ...lightOvTh, ...num }}>Saldo</th>
             </tr>
           </thead>
           <tbody>
             {grouped.map((group) => {
-              const groupTotal = group.items.reduce((s, it) => s + (costoPorItem.get(it.id) || 0), 0);
+              const groupCosto = group.items.reduce((s, it) => s + (costoPorItem.get(it.id) || 0), 0);
+              const groupBase = group.items.reduce((s, it) => s + calcPresupuestoItem(it).valorTotal, 0);
+              const groupSaldo = groupBase - groupCosto;
               return (
                 <React.Fragment key={group.categoria}>
                   <tr>
                     <td style={styles.presGroupRow}>{group.categoria}</td>
-                    <td style={{ ...styles.presGroupRow, fontWeight: 700 }}>{fmtMoney(groupTotal)}</td>
+                    <td style={{ ...styles.presGroupRow, ...num, fontWeight: 800, fontSize: 13 }}>{fmtMoney(groupBase)}</td>
+                    <td style={{ ...styles.presGroupRow, ...num, fontWeight: 800, fontSize: 13 }}>{fmtMoney(groupCosto)}</td>
+                    <td style={{ ...styles.presGroupRow, ...num, fontWeight: 800, fontSize: 13, color: groupSaldo < 0 ? "#E2604F" : "#1F332C" }}>{fmtMoney(groupSaldo)}</td>
                   </tr>
-                  {group.items.map((it) => (
-                    <tr key={it.id}>
-                      <td style={lightOvTd}>{it.item ? `${it.item} · ` : ""}{it.descripcion}</td>
-                      <td style={{ ...lightOvTd, color: costoPorItem.get(it.id) ? BRAND_DARK : OVERVIEW_LIGHT.textSecondary }}>
-                        {fmtMoney(costoPorItem.get(it.id) || 0)}
-                      </td>
-                    </tr>
-                  ))}
+                  {group.items.map((it) => {
+                    const costo = costoPorItem.get(it.id) || 0;
+                    const base = calcPresupuestoItem(it).valorTotal;
+                    const saldo = base - costo;
+                    return (
+                      <tr key={it.id}>
+                        <td style={lightOvTd}>{it.item ? `${it.item} · ` : ""}{it.descripcion}</td>
+                        <td style={{ ...lightOvTd, ...num }}>{fmtMoney(base)}</td>
+                        <td style={{ ...lightOvTd, ...num, color: costo ? BRAND_DARK : OVERVIEW_LIGHT.textSecondary }}>{fmtMoney(costo)}</td>
+                        <td style={{ ...lightOvTd, ...num, color: saldo < 0 ? "#E2604F" : OVERVIEW_LIGHT.textPrimary, fontWeight: saldo < 0 ? 600 : 400 }}>
+                          {fmtMoney(saldo)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </React.Fragment>
               );
             })}
           </tbody>
           <tfoot>
             <tr>
-              <td style={{ ...lightOvTd, fontWeight: 700 }}>Total amarrado a ítems</td>
-              <td style={{ ...lightOvTd, fontWeight: 700 }}>{fmtMoney(totalAmarrado)}</td>
+              <td style={{ ...lightOvTd, fontWeight: 700 }}>Total</td>
+              <td style={{ ...lightOvTd, ...num, fontWeight: 700 }}>{fmtMoney(totalBase)}</td>
+              <td style={{ ...lightOvTd, ...num, fontWeight: 700 }}>{fmtMoney(totalAmarrado)}</td>
+              <td style={{ ...lightOvTd, ...num, fontWeight: 700, color: totalBase - totalAmarrado < 0 ? "#E2604F" : OVERVIEW_LIGHT.textPrimary }}>
+                {fmtMoney(totalBase - totalAmarrado)}
+              </td>
             </tr>
           </tfoot>
         </table>
@@ -544,7 +563,50 @@ export function CostoRealModule({ items, pagos }) {
   );
 }
 
-export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds, baseValoresPorItem, baseValoresPorCategoria, pagadoPorItem, costoRealPorItem, projectName }) {
+// Lista desplegable de categorías: las que ya existen en la tabla, más "Nueva categoría…", que
+// cambia a un campo de texto para escribirla (y con ✕ se vuelve a la lista).
+const NUEVA_CATEGORIA = "__nueva__";
+export function CategoriaSelect({ value, onChange, categorias, style }) {
+  const actual = (value || "").trim();
+  const [escribiendo, setEscribiendo] = useState(!!actual && !categorias.includes(actual));
+  if (escribiendo) {
+    return (
+      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <input
+          style={style}
+          autoFocus
+          placeholder="Nombre de la categoría nueva"
+          value={value || ""}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <button
+          type="button"
+          title="Elegir de la lista"
+          style={{ background: "none", border: "none", cursor: "pointer", color: OVERVIEW_LIGHT.textSecondary, padding: 2 }}
+          onClick={() => { setEscribiendo(false); if (!categorias.includes(actual)) onChange(""); }}
+        >
+          <X size={13} />
+        </button>
+      </span>
+    );
+  }
+  return (
+    <select
+      style={style}
+      value={categorias.includes(actual) ? actual : ""}
+      onChange={(e) => {
+        if (e.target.value === NUEVA_CATEGORIA) { setEscribiendo(true); onChange(""); return; }
+        onChange(e.target.value);
+      }}
+    >
+      <option value="">Elegir categoría…</option>
+      {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
+      <option value={NUEVA_CATEGORIA}>+ Nueva categoría…</option>
+    </select>
+  );
+}
+
+export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, linkedIds, baseValoresPorItem, baseValoresPorCategoria, costoRealPorItem, projectName }) {
   const [newItem, setNewItem] = useState({
     item: "", categoria: "", descripcion: "", cantidad: "", unidad: "",
     valorUnitario: "", ivaPct: "",
@@ -553,6 +615,12 @@ export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, 
   const [showTemplateUpload, setShowTemplateUpload] = useState(false);
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null); // { id, label } | null
   const [searchQuery, setSearchQuery] = useState("");
+  // Categorías que ya existen en esta tabla, en el orden en que aparecen (para la lista desplegable).
+  const categoriasExistentes = [...new Set(items.map((it) => (it.categoria || "").trim()).filter(Boolean))];
+  const totalProyecto = items.reduce((t, it) => {
+    const c = calcPresupuestoItem(it);
+    return { valorTotal: t.valorTotal + c.valorTotal, ivaRecuperable: t.ivaRecuperable + (c.ivaRecuperable || 0) };
+  }, { valorTotal: 0, ivaRecuperable: 0 });
   // Filas bloqueadas por defecto (solo texto) para no dañar nada sin querer — hay que darle al
   // lápiz para poder editar valor/cantidad/nombre/categoría de un ítem ya creado.
   const [editingIds, setEditingIds] = useState(new Set());
@@ -642,7 +710,20 @@ export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, 
       </div>
 
       <div style={lightTableWrap}>
-      <table style={styles.overviewTable}>
+      {/* Ancho fijo por columna: la tabla llena todo el espacio visible sin huecos ni scroll lateral. */}
+      <table style={{ ...styles.overviewTable, tableLayout: "fixed" }}>
+        <colgroup>
+          <col style={{ width: "6%" }} />
+          <col style={{ width: "27%" }} />
+          <col style={{ width: "6%" }} />
+          <col style={{ width: "6%" }} />
+          <col style={{ width: "11%" }} />
+          <col style={{ width: "6%" }} />
+          <col style={{ width: "11%" }} />
+          <col style={{ width: "12%" }} />
+          <col style={{ width: "9%" }} />
+          <col style={{ width: "6%" }} />
+        </colgroup>
         <thead>
           <tr>
             <th style={lightOvTh}>Ítem</th>
@@ -654,15 +735,13 @@ export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, 
             <th style={lightOvTh}>Valor unit. (con IVA)</th>
             <th style={lightOvTh}>Valor total</th>
             <th style={lightOvTh}>IVA recuperable</th>
-            <th style={lightOvTh}>Pagado (real)</th>
-            <th style={lightOvTh}>Categoría</th>
             <th style={lightOvTh}></th>
           </tr>
         </thead>
         <tbody>
           {searchTerm && !grouped.some((g) => g.items.some((it) => normalize(it.item).includes(searchTerm) || normalize(it.descripcion).includes(searchTerm))) && (
             <tr>
-              <td colSpan={12} style={{ ...lightOvTd, textAlign: "center", color: OVERVIEW_LIGHT.textSecondary }}>
+              <td colSpan={10} style={{ ...lightOvTd, textAlign: "center", color: OVERVIEW_LIGHT.textSecondary }}>
                 {searchQuery.trim() ? `Sin resultados para "${searchQuery}".` : "Todavía no hay nada registrado aquí."}
               </td>
             </tr>
@@ -685,7 +764,7 @@ export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, 
                   <td style={{ ...styles.presGroupRow, color: groupExcedido ? "#E2604F" : "#1F332C", fontWeight: 800, fontSize: 13 }}>
                     {fmtMoney(groupTotal)}
                   </td>
-                  <td style={styles.presGroupRow} colSpan={4}></td>
+                  <td style={styles.presGroupRow} colSpan={2}></td>
                 </tr>
                 {visibleItems.map((it) => {
                   const calc = calcPresupuestoItem(it);
@@ -709,7 +788,10 @@ export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, 
                       </td>
                       <td style={lightOvTd}>
                         {editing ? (
-                          <input style={lightMiniInput} value={it.descripcion} onChange={(e) => onUpdate(it.id, { descripcion: e.target.value })} />
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            <input style={lightMiniInput} value={it.descripcion} onChange={(e) => onUpdate(it.id, { descripcion: e.target.value })} />
+                            <CategoriaSelect style={lightMiniInput} categorias={categoriasExistentes} value={it.categoria} onChange={(cat) => onUpdate(it.id, { categoria: cat })} />
+                          </div>
                         ) : (
                           <span style={lightReadonlyText}>{it.descripcion}</span>
                         )}
@@ -778,14 +860,6 @@ export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, 
                           <span style={lightReadonlyText}>{fmtMoney(calc.ivaRecuperable)}</span>
                         )}
                       </td>
-                      <td style={{ ...lightOvTd, color: pagadoPorItem?.get(it.id) ? BRAND_DARK : OVERVIEW_LIGHT.textSecondary }}>
-                        {fmtMoney(pagadoPorItem?.get(it.id) || 0)}
-                      </td>
-                      <td style={lightOvTd}>
-                        {editing && (
-                          <input style={lightMiniInput} value={it.categoria} onChange={(e) => onUpdate(it.id, { categoria: e.target.value })} />
-                        )}
-                      </td>
                       <td style={lightOvTd}>
                         <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                           <button
@@ -810,6 +884,13 @@ export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, 
               </React.Fragment>
             );
           })}
+          {/* Total del proyecto al final de la tabla (todos los ítems, aunque haya un filtro de búsqueda). */}
+          <tr>
+            <td colSpan={7} style={{ ...styles.presGroupRow, background: BRAND_DARK, color: "#FFFFFF", fontSize: 12.5 }}>Total del proyecto</td>
+            <td style={{ ...styles.presGroupRow, background: BRAND_DARK, color: "#FFFFFF", fontWeight: 800, fontSize: 14 }}>{fmtMoney(totalProyecto.valorTotal)}</td>
+            <td style={{ ...styles.presGroupRow, background: BRAND_DARK, color: "#FFFFFF", fontWeight: 700 }}>{fmtMoney(totalProyecto.ivaRecuperable)}</td>
+            <td style={{ ...styles.presGroupRow, background: BRAND_DARK }}></td>
+          </tr>
           <tr>
             <td style={lightOvTd}>
               <input style={{ ...lightMiniInput, width: 56 }} placeholder="1.1" value={newItem.item} onChange={(e) => setNewItem({ ...newItem, item: e.target.value })} />
@@ -829,12 +910,9 @@ export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, 
             <td style={lightOvTd}>
               <input type="number" style={{ ...lightMiniInput, width: 56 }} placeholder="%" value={newItem.ivaPct} onChange={(e) => setNewItem({ ...newItem, ivaPct: e.target.value })} />
             </td>
-            <td style={lightOvTd}></td>
-            <td style={lightOvTd}></td>
-            <td style={lightOvTd}></td>
-            <td style={lightOvTd}></td>
-            <td style={lightOvTd}>
-              <input style={lightMiniInput} placeholder="Categoría (ej. Equipos principales)" value={newItem.categoria} onChange={(e) => setNewItem({ ...newItem, categoria: e.target.value })} />
+            {/* La categoría del ítem nuevo usa el espacio de las 3 columnas calculadas (no hay columna propia). */}
+            <td style={lightOvTd} colSpan={3}>
+              <CategoriaSelect style={lightMiniInput} categorias={categoriasExistentes} value={newItem.categoria} onChange={(cat) => setNewItem({ ...newItem, categoria: cat })} />
             </td>
             <td style={lightOvTd}>
               <button style={lightAddRowBtn} onClick={addItem}><Plus size={14} /></button>
