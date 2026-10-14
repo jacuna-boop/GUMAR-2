@@ -1,9 +1,9 @@
 import { balanceHitosAlertas, balanceTotals, buildCortesObra, cronogramaCurvaSAlerta, daysBetween, energizacionFpoAlerta, energizacionFpoFecha, energizacionFpoFechaSinExtension, energizacionProgress, fmtDate, fmtMoney, nextEnergizacionMilestone, pagosProximosAlertas, pagosTotals, presupuestoTotals, todayISO, uid, upmeNextStep, upmeProgress } from "../lib/data.js";
-import { AlertTriangle, Calendar, DollarSign, FileCheck, Landmark, Plus, Trash2, Users, Wallet, Zap } from "lucide-react";
+import { AlertTriangle, Calendar, DollarSign, FileCheck, Landmark, Plus, Trash2, Users, Wallet, X, Zap } from "lucide-react";
 import { useState } from "react";
 import { BRAND_DARK, FONT_BRAND_DISPLAY, FONT_MONO, OVERVIEW_LIGHT } from "../theme.js";
 import { styles } from "../styles.js";
-import { BigPct, MoneyInput } from "../components/common.jsx";
+import { BigPct } from "../components/common.jsx";
 
 /* ---------------------------------------------------------------------
    Resumen
@@ -197,7 +197,12 @@ export function Resumen({ data, setTab, onChangeInfo, infoReadOnly = false }) {
       </div>
 
       {onChangeInfo && (
-        <div className={infoReadOnly ? "readonly-gate" : undefined}>
+        // Ocupa todo el ancho y reparte sus tarjetas en dos columnas como el resto del Resumen (antes
+        // quedaba metido en la columna izquierda y la derecha se veía vacía).
+        <div
+          className={`app-resumen-grid${infoReadOnly ? " readonly-gate" : ""}`}
+          style={{ ...styles.resumenGrid, gridColumn: "1 / -1" }}
+        >
           <ProyectoInfoSection info={data.info} pagos={data.pagos} onChange={onChangeInfo} />
         </div>
       )}
@@ -232,8 +237,10 @@ export function ProyectoInfoSection({ info, pagos, onChange }) {
       : [...info.cortesObra.contratistas, { id: uid(), proveedor, incluir: checked, reteobra: 0 }];
     onChange({ ...info, cortesObra: { contratistas: next } });
   };
-  const updateReteobra = (proveedor, reteobra) => {
-    onChange({ ...info, cortesObra: { contratistas: info.cortesObra.contratistas.map((c) => (c.proveedor === proveedor ? { ...c, reteobra } : c)) } });
+  // La reteobra se digita como % y se calcula sobre el valor acumulado (buildCortesObra en data.js).
+  const updateReteobraPct = (proveedor, valor) => {
+    const reteobraPct = valor === "" ? "" : Math.max(0, Math.min(100, Number(String(valor).replace(",", ".")) || 0));
+    onChange({ ...info, cortesObra: { contratistas: info.cortesObra.contratistas.map((c) => (c.proveedor === proveedor ? { ...c, reteobraPct } : c)) } });
   };
   const cortes = buildCortesObra(pagos, info.cortesObra);
   const fichaLabel = { fontSize: 11, fontWeight: 700, color: OVERVIEW_LIGHT.textSecondary, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 };
@@ -251,7 +258,7 @@ export function ProyectoInfoSection({ info, pagos, onChange }) {
 
   return (
     <>
-      <div style={{ ...lightCard, gridColumn: "1 / -1" }}>
+      <div style={lightCard}>
         <div style={lightCardHead}><Users size={16} color="#4FA8D8" /><span>Equipo de trabajo</span></div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
           {info.equipo.map((m) => (
@@ -269,9 +276,9 @@ export function ProyectoInfoSection({ info, pagos, onChange }) {
         </div>
       </div>
 
-      <div style={{ ...lightCard, gridColumn: "1 / -1" }}>
+      <div style={lightCard}>
         <div style={lightCardHead}><FileCheck size={16} color="#7FD08A" /><span>Ficha técnica</span></div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginTop: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16, marginTop: 10 }}>
           <div>
             <div style={fichaLabel}>Paneles solares</div>
             <input style={fichaField} placeholder="Cantidad" value={info.fichaTecnica.paneles.cantidad} onChange={(e) => updateFicha("paneles", "cantidad", e.target.value)} />
@@ -302,24 +309,22 @@ export function ProyectoInfoSection({ info, pagos, onChange }) {
 
       <div style={{ ...lightCard, gridColumn: "1 / -1" }}>
         <div style={lightCardHead}><Wallet size={16} color="#E77DA8" /><span>Cortes de obra</span></div>
-        <p style={lightExportHint}>Marca qué proveedores de Pagos cuentan como contratista de obra, y digita su retención (reteobra).</p>
+        <p style={lightExportHint}>Agrega los proveedores de Pagos que cuentan como contratista de obra y digita el porcentaje de retención (reteobra); el valor se calcula sobre lo acumulado.</p>
         {proveedores.length === 0 ? (
           <div style={lightCardSub}>Todavía no hay proveedores registrados en Pagos.</div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
-            {proveedores.map((prov) => {
-              const c = contratistasMap.get(prov);
-              return (
-                <div key={prov} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input type="checkbox" checked={!!c?.incluir} onChange={(e) => toggleContratista(prov, e.target.checked)} />
-                  <span style={{ flex: 1, fontSize: 12.5, color: OVERVIEW_LIGHT.textPrimary }}>{prov}</span>
-                  {c?.incluir && (
-                    <MoneyInput style={{ ...lightMiniInput, width: 140 }} placeholder="Reteobra" value={c.reteobra} onChange={(val) => updateReteobra(prov, val)} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          /* Lista desplegable con los proveedores que aún no son contratistas (antes era una casilla por
+             cada proveedor de Pagos y la tarjeta quedaba muy cargada). */
+          <select
+            style={{ ...lightMiniInput, maxWidth: 360, marginBottom: 12 }}
+            value=""
+            onChange={(e) => { if (e.target.value) toggleContratista(e.target.value, true); }}
+          >
+            <option value="">+ Agregar contratista…</option>
+            {proveedores.filter((prov) => !contratistasMap.get(prov)?.incluir).sort((a, b) => a.localeCompare(b, "es")).map((prov) => (
+              <option key={prov} value={prov}>{prov}</option>
+            ))}
+          </select>
         )}
         {cortes.length > 0 && (
           <div style={lightTableWrap}>
@@ -329,8 +334,10 @@ export function ProyectoInfoSection({ info, pagos, onChange }) {
                   <th style={lightOvTh}>Contratista</th>
                   <th style={lightOvTh}># de corte</th>
                   <th style={lightOvTh}>Vr acumulado</th>
+                  <th style={lightOvTh}>Reteobra %</th>
                   <th style={lightOvTh}>Reteobra</th>
                   <th style={lightOvTh}>Saldo</th>
+                  <th style={lightOvTh}></th>
                 </tr>
               </thead>
               <tbody>
@@ -339,8 +346,29 @@ export function ProyectoInfoSection({ info, pagos, onChange }) {
                     <td style={lightOvTd}>{c.proveedor}</td>
                     <td style={lightOvTd}>{c.numCortes}</td>
                     <td style={lightOvTd}>{fmtMoney(c.vrAcumulado)}</td>
+                    <td style={lightOvTd}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <input
+                          type="number" min="0" max="100" step="0.01"
+                          style={{ ...lightMiniInput, width: 80 }}
+                          placeholder="0"
+                          value={contratistasMap.get(c.proveedor)?.reteobraPct ?? ""}
+                          onChange={(e) => updateReteobraPct(c.proveedor, e.target.value)}
+                        />
+                        %
+                      </span>
+                    </td>
                     <td style={lightOvTd}>{fmtMoney(c.reteobra)}</td>
                     <td style={{ ...lightOvTd, fontWeight: 700 }}>{fmtMoney(c.saldo)}</td>
+                    <td style={lightOvTd}>
+                      <button
+                        title="Quitar de contratistas"
+                        style={{ background: "none", border: "none", cursor: "pointer", color: OVERVIEW_LIGHT.textSecondary }}
+                        onClick={() => toggleContratista(c.proveedor, false)}
+                      >
+                        <X size={14} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

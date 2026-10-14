@@ -3,6 +3,11 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  test: {
+    // Las pruebas de SQL (supabase/tests) levantan cada una un Postgres en memoria (PGlite); con
+    // muchos en paralelo los procesos de prueba se caían ("Worker exited unexpectedly").
+    maxWorkers: 2,
+  },
   build: {
     rollupOptions: {
       output: {
