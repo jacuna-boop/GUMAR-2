@@ -1949,8 +1949,9 @@ function buildEnergizacionCurvaSData(ener, cutoffDate = todayISO()) {
 
 // Arma los "cortes de obra" para el informe PP-I-01: agrupa los pagos por proveedor (solo los que
 // se marquen como "contratista" en cortesObra.contratistas), contando cuántos pagos pagados lleva
-// cada uno como "# de corte" y sumando el valor acumulado — la retención (reteobra) se digita a
-// mano porque no sale de ningún cálculo.
+// cada uno como "# de corte" y sumando el valor acumulado. La retención (reteobra) se calcula con el
+// porcentaje de cada contratista (reteobraPct) sobre el valor acumulado; los que solo tienen un valor
+// fijo guardado de antes (reteobra en $) lo conservan.
 function buildCortesObra(pagos, cortesObraConfig) {
   const seleccion = new Map((cortesObraConfig?.contratistas || []).filter((c) => c.incluir).map((c) => [c.proveedor, c]));
   if (seleccion.size === 0) return [];
@@ -1964,8 +1965,10 @@ function buildCortesObra(pagos, cortesObraConfig) {
     porProveedor.set(prov, cur);
   });
   return Array.from(porProveedor.values()).map((c) => {
-    const reteobra = Number(seleccion.get(c.proveedor)?.reteobra) || 0;
-    return { ...c, reteobra, saldo: c.vrAcumulado - reteobra };
+    const config = seleccion.get(c.proveedor) || {};
+    const pct = Number(config.reteobraPct) || 0;
+    const reteobra = pct ? Math.round(c.vrAcumulado * pct / 100) : Number(config.reteobra) || 0;
+    return { ...c, reteobraPct: pct, reteobra, saldo: c.vrAcumulado - reteobra };
   });
 }
 

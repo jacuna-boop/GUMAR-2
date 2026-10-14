@@ -217,3 +217,20 @@ describe("amarres de órdenes a ítems (Costo real)", () => {
     expect(r.sinAmarre.map((o) => o.id)).toEqual([4]);
   });
 });
+
+describe("cortes de obra: reteobra en porcentaje", () => {
+  it("calcula la reteobra con el % sobre el valor acumulado y conserva un valor fijo viejo", async () => {
+    const { buildCortesObra } = await import("./data.js");
+    const pagos = { ordenes: [
+      { proveedor: "ACME", pagos: [{ valor: 600000, estado: "pagado" }, { valor: 400000, estado: "pagado" }, { valor: 999, estado: "programado" }] },
+      { proveedor: "VIEJO", pagos: [{ valor: 500000, estado: "pagado" }] },
+    ] };
+    const cortes = buildCortesObra(pagos, { contratistas: [
+      { proveedor: "ACME", incluir: true, reteobraPct: 5 },
+      { proveedor: "VIEJO", incluir: true, reteobra: 20000 },
+    ] });
+    const acme = cortes.find((c) => c.proveedor === "ACME");
+    expect(acme).toMatchObject({ numCortes: 2, vrAcumulado: 1000000, reteobraPct: 5, reteobra: 50000, saldo: 950000 });
+    expect(cortes.find((c) => c.proveedor === "VIEJO")).toMatchObject({ reteobra: 20000, saldo: 480000 });
+  });
+});
