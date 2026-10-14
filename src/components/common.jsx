@@ -197,3 +197,26 @@ export function EmptyState({ onAdd }) {
     </div>
   );
 }
+
+// Aviso que aparece al pasar el mouse por un valor. Se posiciona "fixed" (relativo a la ventana)
+// para que no lo corte el scroll de la tabla donde está.
+export function HoverAviso({ texto, children }) {
+  const [pos, setPos] = useState(null);
+  const mostrar = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setPos({ left: Math.max(8, Math.min(window.innerWidth - 268, r.right - 260)), arriba: r.top > 90, top: r.top, bottom: r.bottom });
+  };
+  return (
+    <span className="hover-aviso" onMouseEnter={mostrar} onMouseLeave={() => setPos(null)}>
+      {children}
+      {pos && (
+        <span
+          className="hover-aviso-box"
+          style={{ left: pos.left, top: pos.arriba ? pos.top - 8 : pos.bottom + 8, transform: pos.arriba ? "translateY(-100%)" : "none" }}
+        >
+          {texto}
+        </span>
+      )}
+    </span>
+  );
+}

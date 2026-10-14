@@ -5,7 +5,7 @@ import { Check, ClipboardPaste, FileDown, FileUp, Pencil, Plus, Search, Trash2, 
 import { styles } from "../styles.js";
 import { BRAND_DARK, FONT_BRAND_BODY, OVERVIEW_LIGHT } from "../theme.js";
 import { downloadPresupuestoTemplate, parsePresupuestoWorkbook } from "../lib/excelTemplates.js";
-import { MoneyInput } from "../components/common.jsx";
+import { HoverAviso, MoneyInput } from "../components/common.jsx";
 import { ConfirmModal } from "../modals/dialogs.jsx";
 
 export function PresupuestoModule({ data, onChange, pagos, projectName }) {
@@ -682,7 +682,7 @@ export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, 
                     {group.categoria}
                     {groupExcedido && <span style={lightExcedidoTag}> · supera la base ({fmtMoney(groupTotal - baseGroupTotal)})</span>}
                   </td>
-                  <td style={{ ...styles.presGroupRow, color: groupExcedido ? "#E2604F" : "#1F332C", fontWeight: groupExcedido ? 800 : undefined }}>
+                  <td style={{ ...styles.presGroupRow, color: groupExcedido ? "#E2604F" : "#1F332C", fontWeight: 800, fontSize: 13 }}>
                     {fmtMoney(groupTotal)}
                   </td>
                   <td style={styles.presGroupRow} colSpan={4}></td>
@@ -743,13 +743,20 @@ export function PresupuestoTable({ items, onAdd, onAddMany, onUpdate, onDelete, 
                         )}
                       </td>
                       <td style={lightOvTd}>{fmtMoney(calc.valorUnitarioConIva)}</td>
-                      <td style={{ ...lightOvTd, fontWeight: 700, color: (itemExcedido || necesitaActualizar) ? "#E2604F" : OVERVIEW_LIGHT.textPrimary }}>
-                        {fmtMoney(calc.valorTotal)}
-                        {itemExcedido && <div style={lightExcedidoTag}>+{fmtMoney(calc.valorTotal - baseValor)} vs. base</div>}
-                        {necesitaActualizar && (
-                          <div style={lightExcedidoTag} title="El costo real (órdenes amarradas en Pagos) es mayor a lo digitado aquí">
-                            Costo real: {fmtMoney(costoReal)} — actualiza este ítem
-                          </div>
+                      <td style={{ ...lightOvTd, fontWeight: 400, color: (itemExcedido || necesitaActualizar) ? "#E2604F" : OVERVIEW_LIGHT.textPrimary }}>
+                        {/* Los avisos (supera la base / costo real mayor) se muestran solo al pasar el mouse
+                            por el valor; antes eran textos fijos en cada fila y llenaban la tabla. */}
+                        {itemExcedido || necesitaActualizar ? (
+                          <HoverAviso
+                            texto={[
+                              itemExcedido && `Supera el presupuesto base en ${fmtMoney(calc.valorTotal - baseValor)} (base: ${fmtMoney(baseValor)}).`,
+                              necesitaActualizar && `Costo real: ${fmtMoney(costoReal)} (órdenes cargadas en Pagos) — supera este valor en ${fmtMoney(costoReal - calc.valorTotal)}. Actualiza este ítem.`,
+                            ].filter(Boolean).join(" ")}
+                          >
+                            {fmtMoney(calc.valorTotal)}
+                          </HoverAviso>
+                        ) : (
+                          fmtMoney(calc.valorTotal)
                         )}
                       </td>
                       <td style={lightOvTd}>
