@@ -169,3 +169,51 @@ describe("CNO 2233 en energización (≤1MW)", () => {
     expect(d.cambiarNormaEnergizacion(a2233, "2233")).toBe(a2233); // misma norma: no cambia nada
   });
 });
+
+describe("amarres de órdenes a ítems (Costo real)", () => {
+  it("valor sugerido = lo que falta por asignar", async () => {
+    const { valorSugeridoAmarre } = await import("./data.js");
+    expect(valorSugeridoAmarre({ valorTotal: 100, presupuestoItems: [] })).toBe(100);
+    expect(valorSugeridoAmarre({ valorTotal: 100, presupuestoItems: [{ valor: 30 }] })).toBe(70);
+    expect(valorSugeridoAmarre({ valorTotal: 100, presupuestoItems: [{ valor: 130 }] })).toBe(0);
+  });
+  it("cambiar el valor de la orden ajusta un amarre único que la cubría (o estaba en $0), no los repartidos", async () => {
+    const { actualizarValorOrden } = await import("./data.js");
+    const unico = actualizarValorOrden({ valorTotal: 100, presupuestoItems: [{ id: "l", itemId: "i", valor: 100 }] }, 150);
+    expect(unico.valorTotal).toBe(150);
+    expect(unico.presupuestoItems[0].valor).toBe(150);
+    expect(actualizarValorOrden({ valorTotal: 100, presupuestoItems: [{ itemId: "i", valor: 0 }] }, 80).presupuestoItems[0].valor).toBe(80);
+    expect(actualizarValorOrden({ valorTotal: 100, presupuestoItems: [{ itemId: "i", valor: 40 }] }, 80).presupuestoItems[0].valor).toBe(40);
+    const repartida = actualizarValorOrden({ valorTotal: 100, presupuestoItems: [{ itemId: "a", valor: 60 }, { itemId: "b", valor: 40 }] }, 200);
+    expect(repartida.presupuestoItems.map((l) => l.valor)).toEqual([60, 40]);
+  });
+  it("costo real = valor de las órdenes cargadas a cada ítem (aunque el valor asignado esté en $0)", async () => {
+    const { costoRealPorItemMap, pagadoPorItemMap } = await import("./data.js");
+    const pagos = { ordenes: [
+      { valorTotal: 100, presupuestoItems: [{ itemId: "a", valor: 0 }], pagos: [{ valor: 40, estado: "pagado" }] },
+      { valorTotal: 50, presupuestoItems: [{ itemId: "a", valor: 50 }], pagos: [] },
+      { valorTotal: 200, presupuestoItems: [{ itemId: "b", valor: 30 }, { itemId: "c", valor: 10 }], pagos: [{ valor: 100, estado: "pagado" }] },
+      { valorTotal: 60, presupuestoItems: [{ itemId: "d", valor: 0 }, { itemId: "e", valor: 0 }], pagos: [] },
+      { valorTotal: 70, presupuestoItems: [{ itemId: "f", valor: 20 }, { itemId: "f", valor: 0 }], pagos: [] },
+    ] };
+    const c = costoRealPorItemMap(pagos);
+    expect(c.get("a")).toBe(150);
+    expect(c.get("b")).toBe(150); // repartida: 30 de 40 asignados
+    expect(c.get("c")).toBe(50);
+    expect(c.get("d")).toBe(30); // repartida sin valores: partes iguales
+    expect(c.get("f")).toBe(70); // dos amarres al mismo ítem = un solo ítem
+    expect(pagadoPorItemMap(pagos).get("a")).toBe(40);
+    expect(pagadoPorItemMap(pagos).get("b")).toBe(75);
+  });
+  it("a revisar: órdenes sin ítem y repartidas cuyo asignado no cuadra", async () => {
+    const { ordenesDescuadradas } = await import("./data.js");
+    const r = ordenesDescuadradas({ ordenes: [
+      { id: 1, valorTotal: 100, presupuestoItems: [{ itemId: "a", valor: 0 }] },
+      { id: 2, valorTotal: 100, presupuestoItems: [{ itemId: "a", valor: 60 }, { itemId: "b", valor: 40 }] },
+      { id: 3, valorTotal: 100, presupuestoItems: [{ itemId: "a", valor: 60 }, { itemId: "b", valor: 0 }] },
+      { id: 4, valorTotal: 50, presupuestoItems: [] },
+    ] });
+    expect(r.descuadradas.map((d) => [d.orden.id, d.diferencia])).toEqual([[3, 40]]);
+    expect(r.sinAmarre.map((o) => o.id)).toEqual([4]);
+  });
+});

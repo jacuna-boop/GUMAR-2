@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { buildFlujoCajaPeriodos, calcPresupuestoItem, costoRealPorItemMap, flujoCajaSumaPct, flujoCajaTotalesPorPeriodo, fmtMoney, groupPresupuestoItems, pagadoPorItemMap, pagosTotals, parsePresupuestoPaste, presupuestoListTotal, presupuestoTotals, uid } from "../lib/data.js";
+import { buildFlujoCajaPeriodos, calcPresupuestoItem, costoRealPorItemMap, ordenesDescuadradas, flujoCajaSumaPct, flujoCajaTotalesPorPeriodo, fmtMoney, groupPresupuestoItems, pagadoPorItemMap, pagosTotals, parsePresupuestoPaste, presupuestoListTotal, presupuestoTotals, uid } from "../lib/data.js";
 import { Bar, BarChart, CartesianGrid, Legend as RLegend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Check, ClipboardPaste, FileDown, FileUp, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { styles } from "../styles.js";
@@ -445,9 +445,11 @@ export function FlujoCajaModule({ items, flujoCaja, onChange }) {
 export function CostoRealModule({ items, pagos }) {
   const costoPorItem = costoRealPorItemMap(pagos);
   const grouped = groupPresupuestoItems(items);
-  const totalAmarrado = Array.from(costoPorItem.values()).reduce((s, v) => s + v, 0);
+  // Solo ítems que existen en la base: así el total coincide con la suma de las filas (los amarres a
+  // ítems ya borrados no se ven en ninguna fila).
+  const totalAmarrado = items.reduce((s, it) => s + (costoPorItem.get(it.id) || 0), 0);
   const totalOrdenes = pagosTotals(pagos).totalOrdenes;
-  const sinAmarrar = Math.max(0, totalOrdenes - totalAmarrado);
+  const { descuadradas, sinAmarre } = ordenesDescuadradas(pagos);
 
   const lightHint = { ...styles.exportHint, color: OVERVIEW_LIGHT.pageTextSecondary };
   const lightTableWrap = { ...styles.cronoTableWrap, background: OVERVIEW_LIGHT.card, border: `1px solid ${OVERVIEW_LIGHT.border}` };
@@ -498,10 +500,44 @@ export function CostoRealModule({ items, pagos }) {
           </tfoot>
         </table>
       </div>
-      {sinAmarrar > 0 && (
-        <div style={{ marginTop: 10, fontSize: 11.5, color: OVERVIEW_LIGHT.pageTextSecondary }}>
-          Hay <span style={{ color: "#FFE8B3", fontWeight: 700 }}>{fmtMoney(sinAmarrar)}</span> en órdenes de
-          servicio de Pagos sin ítem de presupuesto amarrado (o amarradas solo parcialmente).
+      {(descuadradas.length > 0 || sinAmarre.length > 0) && (
+        <div style={{ ...lightTableWrap, marginTop: 14, padding: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#B5790F", marginBottom: 6 }}>
+            Órdenes a revisar (Costo real suma {fmtMoney(totalAmarrado)} de {fmtMoney(totalOrdenes)} en órdenes)
+          </div>
+          <div style={{ fontSize: 11.5, color: OVERVIEW_LIGHT.textSecondary, marginBottom: 8 }}>
+            Costo real suma el valor completo de las órdenes cargadas a cada ítem. Las órdenes sin ítem no suman en ninguno; las repartidas entre varios ítems se reparten según el valor asignado a cada uno. Corrígelas en la pestaña Pagos.
+          </div>
+          <table style={styles.overviewTable}>
+            <thead>
+              <tr>
+                <th style={lightOvTh}>Orden</th>
+                <th style={lightOvTh}>Valor orden</th>
+                <th style={lightOvTh}>Asignado a ítems</th>
+                <th style={lightOvTh}>Problema</th>
+              </tr>
+            </thead>
+            <tbody>
+              {descuadradas.map(({ orden, asignado, valorTotal, diferencia, items }) => (
+                <tr key={orden.id}>
+                  <td style={lightOvTd}>{orden.numero}{orden.proveedor ? ` · ${orden.proveedor}` : ""}</td>
+                  <td style={lightOvTd}>{fmtMoney(valorTotal)}</td>
+                  <td style={lightOvTd}>{fmtMoney(asignado)}</td>
+                  <td style={{ ...lightOvTd, color: diferencia < 0 ? "#E2604F" : "#B5790F" }}>
+                    {`Repartida en ${items} ítems: lo asignado ${diferencia > 0 ? "no alcanza" : "supera"} el valor de la orden (se reparte en proporción)`}
+                  </td>
+                </tr>
+              ))}
+              {sinAmarre.map((o) => (
+                <tr key={o.id}>
+                  <td style={lightOvTd}>{o.numero}{o.proveedor ? ` · ${o.proveedor}` : ""}</td>
+                  <td style={lightOvTd}>{fmtMoney(o.valorTotal)}</td>
+                  <td style={lightOvTd}>{fmtMoney(0)}</td>
+                  <td style={{ ...lightOvTd, color: "#B5790F" }}>Sin ítem amarrado</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

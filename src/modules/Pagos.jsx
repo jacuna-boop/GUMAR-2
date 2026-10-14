@@ -1,4 +1,4 @@
-import { fmtDate, fmtMoney, groupPresupuestoItems, ordenPagado, ordenPresupuestoAsignado, ordenProgramado, ordenSaldo, pagosProximosAlertas, pagosTotals, todayISO, uid } from "../lib/data.js";
+import { fmtDate, fmtMoney, groupPresupuestoItems, ordenPagado, ordenPresupuestoAsignado, valorSugeridoAmarre, actualizarValorOrden, ordenProgramado, ordenSaldo, pagosProximosAlertas, pagosTotals, todayISO, uid } from "../lib/data.js";
 import React, { useRef, useState } from "react";
 import { AlertTriangle, FileDown, FileUp, Plus, Search, Trash2, X } from "lucide-react";
 import { styles } from "../styles.js";
@@ -67,7 +67,9 @@ export function PagosModule({ data, onChange, projectName, presupuestoBase = [],
   // orden le corresponde a ese ítem (ver costoRealPorItemMap en data.js, que suma esto por ítem).
   const addPresupuestoLink = (ordenId) => {
     if (!newLink.itemId) return;
-    const link = { id: uid(), itemId: newLink.itemId, valor: Number(newLink.valor) || 0 };
+    // Sin valor escrito: se asigna lo que falta de la orden (antes quedaba en $0 y no sumaba en Costo real).
+    const orden = data.ordenes.find((o) => o.id === ordenId);
+    const link = { id: uid(), itemId: newLink.itemId, valor: Number(newLink.valor) || valorSugeridoAmarre(orden) };
     onChange({
       ...data,
       ordenes: data.ordenes.map((o) => (o.id === ordenId ? { ...o, presupuestoItems: [...(o.presupuestoItems || []), link] } : o)),
@@ -281,7 +283,7 @@ export function PagosModule({ data, onChange, projectName, presupuestoBase = [],
                       <MoneyInput
                         style={lightMiniInput}
                         value={o.valorTotal}
-                        onChange={(val) => updateOrden(o.id, { valorTotal: val })}
+                        onChange={(val) => onChange({ ...data, ordenes: data.ordenes.map((x) => (x.id === o.id ? actualizarValorOrden(x, val) : x)) })}
                       />
                     </td>
                     <td style={lightOvTd}>
@@ -345,7 +347,7 @@ export function PagosModule({ data, onChange, projectName, presupuestoBase = [],
                                   />
                                 </td>
                                 <td style={lightOvTd}>
-                                  <MoneyInput style={lightMiniInput} placeholder="$" value={newLink.valor} onChange={(val) => setNewLink({ ...newLink, valor: val })} />
+                                  <MoneyInput style={lightMiniInput} placeholder={valorSugeridoAmarre(o) ? `Falta ${fmtMoney(valorSugeridoAmarre(o))}` : "$"} value={newLink.valor} onChange={(val) => setNewLink({ ...newLink, valor: val })} />
                                 </td>
                                 <td style={lightOvTd}>
                                   <button style={lightAddRowBtn} onClick={() => addPresupuestoLink(o.id)}><Plus size={14} /></button>
@@ -354,12 +356,23 @@ export function PagosModule({ data, onChange, projectName, presupuestoBase = [],
                             </tbody>
                           </table>
                           {(o.presupuestoItems || []).length > 0 && (() => {
+                            // Cargada a un solo ítem: cuenta completa en Costo real. Solo las repartidas entre
+                            // varios ítems dependen del valor asignado a cada uno.
+                            const repartida = new Set(o.presupuestoItems.filter((l) => l.itemId).map((l) => l.itemId)).size > 1;
+                            if (!repartida) {
+                              return (
+                                <div style={{ fontSize: 10.5, color: OVERVIEW_LIGHT.textSecondary, margin: "4px 0 12px" }}>
+                                  Cargada completa ({fmtMoney(o.valorTotal)}) al ítem amarrado en Costo real.
+                                </div>
+                              );
+                            }
                             const asignado = ordenPresupuestoAsignado(o);
                             const excede = asignado > o.valorTotal;
+                            const falta = o.valorTotal - asignado > 1;
                             return (
-                              <div style={{ fontSize: 10.5, color: excede ? "#E2604F" : OVERVIEW_LIGHT.textSecondary, margin: "4px 0 12px" }}>
-                                Asignado: {fmtMoney(asignado)} de {fmtMoney(o.valorTotal)} (valor de la orden)
-                                {excede && " — supera el valor de la orden."}
+                              <div style={{ fontSize: 10.5, color: excede ? "#E2604F" : falta ? "#B5790F" : OVERVIEW_LIGHT.textSecondary, margin: "4px 0 12px", fontWeight: excede || falta ? 600 : 400 }}>
+                                Repartida entre ítems. Asignado: {fmtMoney(asignado)} de {fmtMoney(o.valorTotal)} (valor de la orden)
+                                {(excede || falta) && " — no cuadra: en Costo real se reparte en proporción a lo asignado."}
                               </div>
                             );
                           })()}

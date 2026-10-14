@@ -461,11 +461,11 @@ describe("pagadoPorItemMap", () => {
 });
 
 describe("costoRealPorItemMap", () => {
-  it("suma el valor completo asignado a cada ítem, sin importar lo pagado", () => {
+  it("suma el valor completo de las órdenes de cada ítem, sin importar lo pagado", () => {
     const pagos = {
       ordenes: [
-        { id: "o1", presupuestoItems: [{ id: "l1", itemId: "it1", valor: 700000 }], pagos: [] },
-        { id: "o2", presupuestoItems: [{ id: "l2", itemId: "it1", valor: 300000 }], pagos: [{ valor: 999, estado: "pagado" }] },
+        { id: "o1", valorTotal: 700000, presupuestoItems: [{ id: "l1", itemId: "it1", valor: 700000 }], pagos: [] },
+        { id: "o2", valorTotal: 300000, presupuestoItems: [{ id: "l2", itemId: "it1", valor: 300000 }], pagos: [{ valor: 999, estado: "pagado" }] },
       ],
     };
     expect(costoRealPorItemMap(pagos).get("it1")).toBe(1000000);
@@ -474,7 +474,7 @@ describe("costoRealPorItemMap", () => {
   it("una orden repartida entre varios ítems suma a cada uno por separado", () => {
     const pagos = {
       ordenes: [{
-        id: "o1",
+        id: "o1", valorTotal: 1000000,
         presupuestoItems: [{ id: "l1", itemId: "it1", valor: 600000 }, { id: "l2", itemId: "it2", valor: 400000 }],
         pagos: [],
       }],
