@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { CAT_STYLE, parseColombianNumber } from "../lib/data.js";
-import { Plus, Sun } from "lucide-react";
+import { AlertTriangle, Plus, RefreshCw, Sun } from "lucide-react";
 import { styles } from "../styles.js";
 
 export function MiniBar({ label, pct, color, displayLabel }) {
@@ -194,6 +194,26 @@ export function EmptyState({ onAdd }) {
       <h2 style={styles.h2}>Aún no tienes proyectos</h2>
       <p style={styles.emptyP}>Crea tu primer parque solar para empezar a llevar el seguimiento de radicación UPME y energización.</p>
       <button style={styles.addProjectBtn} onClick={onAdd}><Plus size={15} /> Nuevo proyecto</button>
+    </div>
+  );
+}
+
+// Se muestra cuando la lista de proyectos no se pudo cargar (en vez de "Aún no tienes proyectos",
+// que hacía creer que se habían borrado).
+export function ProjectsLoadError({ onRetry }) {
+  const [retrying, setRetrying] = useState(false);
+  const retry = async () => {
+    setRetrying(true);
+    try { await onRetry(); } finally { setRetrying(false); }
+  };
+  return (
+    <div style={styles.emptyState}>
+      <AlertTriangle size={40} color="#FFFFFF" />
+      <h2 style={styles.h2}>No se pudieron cargar los proyectos</h2>
+      <p style={styles.emptyP}>Tus proyectos siguen guardados. Fue un problema de conexión al abrir la página.</p>
+      <button style={styles.addProjectBtn} onClick={retry} disabled={retrying}>
+        <RefreshCw size={15} className={retrying ? "spin" : undefined} /> {retrying ? "Cargando…" : "Reintentar"}
+      </button>
     </div>
   );
 }
