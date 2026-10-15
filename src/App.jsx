@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "./lib/supabaseClient";
 import { Circle, FileDown, Loader2, X } from "lucide-react";
 import Login from "./components/Login";
@@ -10,7 +10,7 @@ import { styles } from "./styles.js";
 import { TAB_PERM_KEY } from "./lib/permisos.js";
 import { GlobalStyle } from "./components/GlobalStyle.jsx";
 import { Sidebar } from "./components/Sidebar.jsx";
-import { EmptyState } from "./components/common.jsx";
+import { EmptyState, ProjectsLoadError } from "./components/common.jsx";
 import { FONT_BRAND_BODY, FONT_BRAND_DISPLAY, OVERVIEW_LIGHT } from "./theme.js";
 import { ResumenGeneral } from "./modules/ResumenGeneral.jsx";
 import { Header } from "./components/Header.jsx";
@@ -105,14 +105,41 @@ function Dashboard({ session }) {
 
   const rowToProject = (row) => ({ id: row.id, name: row.name, capacity: row.capacity, location: row.location, code: row.code || "", createdAt: row.created_at });
 
+  // Lista de proyectos con reintentos. Antes un error al abrir la página (red, token vencido justo
+  // al despertar el equipo) se ignoraba y se veía "Aún no tienes proyectos" aunque sí hubiera.
+  // Una lista vacía sin error también se reintenta una vez: puede ser una consulta que salió sin
+  // la sesión lista (RLS devuelve 0 filas en vez de error).
+  const [projectsError, setProjectsError] = useState(false);
+  const fetchProjects = useCallback(async () => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const { data, error } = await supabase.from("projects").select("*").order("created_at", { ascending: true });
+      if (!error && data && (data.length > 0 || attempt >= 2)) return data;
+      if (error) console.error("Error cargando proyectos:", error.message);
+      if (attempt < 3) {
+        if (error) await supabase.auth.refreshSession().catch(() => {});
+        await new Promise((r) => setTimeout(r, 700 * attempt));
+      }
+    }
+    return null;
+  }, []);
+
+  const loadProjects = useCallback(async () => {
+    const data = await fetchProjects();
+    if (data) {
+      setProjects(data.map(rowToProject));
+      setProjectsError(false);
+    } else {
+      setProjectsError(true);
+    }
+  }, [fetchProjects]);
+
   // Initial load: full project list + el rol y cargo de quien inició sesión (para permisos)
   useEffect(() => {
     (async () => {
-      const [{ data, error }, roleResult] = await Promise.all([
-        supabase.from("projects").select("*").order("created_at", { ascending: true }),
+      const [, roleResult] = await Promise.all([
+        loadProjects(),
         supabase.from("profiles").select("role, full_name, cargos(*)").eq("id", user.id).maybeSingle(),
       ]);
-      if (!error && data) setProjects(data.map(rowToProject));
       // Si la columna "role"/"cargo_id" todavía no existe (no se ha corrido la migración) o no hay
       // perfil/cargo asignado, se queda en los valores por defecto — no rompe el acceso de nadie.
       if (!roleResult.error && roleResult.data?.role) setRole(roleResult.data.role);
@@ -122,6 +149,17 @@ function Dashboard({ session }) {
       setLoading(false);
     })();
   }, []);
+
+  // Si la lista quedó vacía o con error, volver a intentar cuando la persona regresa a la pestaña.
+  const projectsCountRef = useRef(0);
+  useEffect(() => { projectsCountRef.current = projects.length; }, [projects.length]);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && projectsCountRef.current === 0) loadProjects();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [loadProjects]);
 
   // Load selected project's data when selection changes (si falló, se reintenta con el botón, no solo)
   useEffect(() => {
@@ -336,7 +374,9 @@ function Dashboard({ session }) {
           canManageUsers={canManageUsers}
         />
         <main className="app-main" style={styles.main}>
-          {projects.length === 0 ? (
+          {projects.length === 0 && projectsError ? (
+            <ProjectsLoadError onRetry={loadProjects} />
+          ) : projects.length === 0 ? (
             <EmptyState onAdd={() => setShowAddProject(true)} />
           ) : view === "overview" ? (
             <div style={{ background: OVERVIEW_LIGHT.page, minHeight: "100%" }}>
