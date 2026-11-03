@@ -463,6 +463,7 @@ function Dashboard({ session }) {
                     onChange={(nextEner) => updateProjectData(selectedId, (cur) => ({ ...cur, energizacion: nextEner }))}
                     projectId={selectedId}
                     isLector={tabReadOnly}
+                    autorNombre={myFullName || user.email}
                   />
                 ) : tab === "cronograma" ? (
                   <CronogramaModule

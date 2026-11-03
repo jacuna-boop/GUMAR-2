@@ -817,7 +817,11 @@ function cloneUpmeState(upme) {
   return upme ? JSON.parse(JSON.stringify(upme)) : emptyUpmeState();
 }
 function cloneEnergizacionState(energizacion) {
-  return energizacion ? JSON.parse(JSON.stringify(energizacion)) : emptyEnergizacionState();
+  if (!energizacion) return emptyEnergizacionState();
+  const copia = JSON.parse(JSON.stringify(energizacion));
+  // Los comentarios son la bitácora de ESE proyecto: no se copian al crear uno nuevo a partir de él.
+  copia.milestones = (copia.milestones || []).map(({ comentarios, ...m }) => m); // eslint-disable-line no-unused-vars
+  return copia;
 }
 
 // Datos para el informe semanal PP-I-01 (control presupuestal y cronograma): equipo de trabajo,

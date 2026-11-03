@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { CAT_STYLE, addMonths, buildEnergizacionCurvaSData, cambiarNormaEnergizacion, hitosCno2233Marcados, daysBetween, energizacionDiasRefFor, energizacionFpoAlerta, energizacionGroupsFor, energizacionProgress, fmtDate, todayISO } from "../lib/data.js";
-import { AlertTriangle, CheckCircle2, Circle, Zap } from "lucide-react";
+import React, { useState } from "react";
+import { CAT_STYLE, addMonths, buildEnergizacionCurvaSData, cambiarNormaEnergizacion, hitosCno2233Marcados, daysBetween, energizacionDiasRefFor, energizacionFpoAlerta, energizacionGroupsFor, energizacionProgress, fmtDate, fmtDateTime, todayISO, uid } from "../lib/data.js";
+import { AlertTriangle, CheckCircle2, Circle, MessageSquare, Trash2, Zap } from "lucide-react";
 import { CartesianGrid, Legend as RLegend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { styles } from "../styles.js";
 import { BRAND_DARK, FONT_BRAND_BODY, FONT_BRAND_DISPLAY, OVERVIEW_LIGHT } from "../theme.js";
@@ -14,7 +14,7 @@ import { ejeTiempoProps, fechaLargaTs } from "../lib/fechasGrafica.js";
 /* ---------------------------------------------------------------------
    Energización module
 --------------------------------------------------------------------- */
-export function EnergizacionModule({ data, onChange, projectId, isLector }) {
+export function EnergizacionModule({ data, onChange, projectId, isLector, autorNombre = "" }) {
   const esMayor1mw = data.tipo === "mayor1mw";
   const groups = energizacionGroupsFor(data);
   const diasRef = energizacionDiasRefFor(data);
@@ -24,6 +24,21 @@ export function EnergizacionModule({ data, onChange, projectId, isLector }) {
   const fpoAlerta = energizacionFpoAlerta(data);
   const curvaSData = buildEnergizacionCurvaSData(data);
   let cursor = 0;
+
+  // Comentarios por trámite: bitácora en milestones[i].comentarios = [{ id, texto, autor, fecha }].
+  // Se guardan con el resto de Energización, así que solo los puede escribir quien edita ese módulo.
+  const [comentariosAbiertos, setComentariosAbiertos] = useState({});
+  const cambiarComentarios = (idx, fn) => {
+    const milestones = [...data.milestones];
+    while (milestones.length <= idx) milestones.push({ done: false, fecha: "" });
+    milestones[idx] = { ...milestones[idx], comentarios: fn(milestones[idx].comentarios || []) };
+    onChange({ ...data, milestones });
+  };
+  const agregarComentario = (idx, texto) => cambiarComentarios(idx, (lista) => [
+    ...lista,
+    { id: uid(), texto: texto.trim(), autor: autorNombre || "—", fecha: new Date().toISOString() },
+  ]);
+  const borrarComentario = (idx, id) => cambiarComentarios(idx, (lista) => lista.filter((c) => c.id !== id));
 
   // Marcar un hito como hecho pregunta primero la fecha real (antes se ponía "hoy" sin avisar, y los
   // hitos marcados tarde quedaban con una fecha falsa que deformaba la curva de avance real).
@@ -188,8 +203,8 @@ export function EnergizacionModule({ data, onChange, projectId, isLector }) {
                 const state = data.milestones[i] || { done: false, fecha: "" };
                 const delayed = !state.done && elapsed !== null && elapsed > it.day;
                 return (
+                  <React.Fragment key={i}>
                   <div
-                    key={i}
                     style={{
                       ...styles.wbsItemRow,
                       borderLeftColor: state.done ? BRAND_DARK : delayed ? "#E2604F" : OVERVIEW_LIGHT.border,
@@ -226,7 +241,30 @@ export function EnergizacionModule({ data, onChange, projectId, isLector }) {
                     {projectId && (
                       <AttachmentsButton projectId={projectId} modulo="energizacion" entidadId={i} readOnly={isLector} />
                     )}
+                    <button
+                      type="button"
+                      className="ro-ok"
+                      title={(state.comentarios || []).length ? "Ver comentarios" : "Agregar comentario"}
+                      onClick={() => setComentariosAbiertos((prev) => ({ ...prev, [i]: !prev[i] }))}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 3, background: "none", border: "none", cursor: "pointer", padding: "2px 4px",
+                        color: (state.comentarios || []).length ? BRAND_DARK : "#8FA39B", fontSize: 11.5, fontWeight: 600,
+                      }}
+                    >
+                      <MessageSquare size={15} />
+                      {(state.comentarios || []).length > 0 && (state.comentarios || []).length}
+                    </button>
                   </div>
+                  {comentariosAbiertos[i] && (
+                    <ComentariosTramite
+                      comentarios={state.comentarios || []}
+                      puedeComentar={!isLector}
+                      onAgregar={(texto) => agregarComentario(i, texto)}
+                      onBorrar={(id) => borrarComentario(i, id)}
+                      autor={autorNombre}
+                    />
+                  )}
+                  </React.Fragment>
                 );
               })}
             </div>
@@ -272,6 +310,60 @@ export function EnergizacionModule({ data, onChange, projectId, isLector }) {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// Bitácora de comentarios de un trámite: lista (quién y cuándo) + campo para agregar. Cada quien solo
+// puede borrar sus propios comentarios.
+function ComentariosTramite({ comentarios, puedeComentar, onAgregar, onBorrar, autor }) {
+  const [texto, setTexto] = useState("");
+  const agregar = () => {
+    if (!texto.trim()) return;
+    onAgregar(texto);
+    setTexto("");
+  };
+  return (
+    <div style={{ margin: "0 0 8px 34px", padding: "10px 12px", borderLeft: `2px solid ${OVERVIEW_LIGHT.border}`, background: "#F7FAF9", borderRadius: 6 }}>
+      {comentarios.length === 0 && (
+        <div style={{ fontSize: 12, color: OVERVIEW_LIGHT.textSecondary, marginBottom: puedeComentar ? 8 : 0 }}>Sin comentarios todavía.</div>
+      )}
+      {comentarios.map((c) => (
+        <div key={c.id} style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: OVERVIEW_LIGHT.textSecondary, display: "flex", alignItems: "center", gap: 6 }}>
+            <strong style={{ color: OVERVIEW_LIGHT.textPrimary }}>{c.autor}</strong>
+            <span>{fmtDateTime(new Date(c.fecha))}</span>
+            {puedeComentar && c.autor === autor && (
+              <button
+                type="button"
+                title="Borrar mi comentario"
+                onClick={() => { if (window.confirm("¿Borrar este comentario?")) onBorrar(c.id); }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#8FA39B", padding: 0, display: "inline-flex" }}
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </div>
+          <div style={{ fontSize: 12.5, color: OVERVIEW_LIGHT.textPrimary, whiteSpace: "pre-wrap", marginTop: 2 }}>{c.texto}</div>
+        </div>
+      ))}
+      {puedeComentar ? (
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+          <textarea
+            rows={2}
+            placeholder="Escribe un comentario…"
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) agregar(); }}
+            style={{ flex: 1, resize: "vertical", padding: "6px 8px", fontSize: 12.5, fontFamily: FONT_BRAND_BODY, border: `1px solid ${OVERVIEW_LIGHT.border}`, borderRadius: 6, background: "#FFFFFF", color: OVERVIEW_LIGHT.textPrimary }}
+          />
+          <button type="button" onClick={agregar} disabled={!texto.trim()} style={{ ...styles.addProjectBtn, opacity: texto.trim() ? 1 : 0.5, whiteSpace: "nowrap" }}>
+            Comentar
+          </button>
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: OVERVIEW_LIGHT.textSecondary }}>Solo quien edita Energización puede comentar.</div>
       )}
     </div>
   );
